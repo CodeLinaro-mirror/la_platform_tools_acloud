@@ -13,13 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-"""Common Utilities.
-
-The following code is copied from chromite with modifications.
-  - class TempDir: chromite/lib/osutils.py
-
-"""
+"""Common Utilities."""
 
 import base64
 import binascii
@@ -38,168 +32,162 @@ import uuid
 
 from acloud.public import errors
 
-
 logger = logging.getLogger(__name__)
 
-
 SSH_KEYGEN_CMD = ["ssh-keygen", "-t", "rsa", "-b", "4096"]
+DEFAULT_RETRY_BACKOFF_FACTOR = 1
+DEFAULT_SLEEP_MULTIPLIER = 0
 
 
 class TempDir(object):
-    """Object that creates a temporary directory.
+    """A context manager that ceates a temporary directory.
 
-    This object can either be used as a context manager or just as a simple
-    object. The temporary directory is stored as self.tempdir in the object, and
-    is returned as a string by a 'with' statement.
+    Attributes:
+      path: The path of the temporary directory.
     """
 
-    def __init__(self, prefix='tmp', base_dir=None, delete=True):
-        """Constructor. Creates the temporary directory.
-
-        Args:
-            prefix: See tempfile.mkdtemp documentation.
-            base_dir: The directory to place the temporary directory.
-                      If None, will choose from system default tmp dir.
-            delete: Whether the temporary dir should be deleted as part of cleanup.
-        """
-        self.delete = delete
-        self.tempdir = tempfile.mkdtemp(prefix=prefix, dir=base_dir)
-        os.chmod(self.tempdir, 0o700)
-
-    def Cleanup(self):
-        """Clean up the temporary directory."""
-        # Note that _TempDirSetup may have failed, resulting in these attributes
-        # not being set; this is why we use getattr here (and must).
-        tempdir = getattr(self, 'tempdir', None)
-        if tempdir is not None and self.delete:
-            try:
-                shutil.rmtree(tempdir)
-            except EnvironmentError as e:
-                # Ignore error if directory or file does not exist.
-                if e.errno != errno.ENOENT:
-                    raise
-            finally:
-                self.tempdir = None
+    def __init__(self):
+        self.path = tempfile.mkdtemp()
+        os.chmod(self.path, 0o700)
+        logger.debug("Created temporary dir %s", self.path)
 
     def __enter__(self):
-        """Return the temporary directory."""
-        return self.tempdir
+        """Enter."""
+        return self.path
 
-    def __exit__(self, exc_type, exc_value, exc_traceback):
-        """Exit the context manager."""
+    def __exit__(self, exc_type, exc_value, traceback):
+        """Exit.
+
+        Args:
+            exc_type: Exception type raised within the context manager.
+                      None if no execption is raised.
+            exc_value: Exception instance raised within the context manager.
+                       None if no execption is raised.
+            traceback: Traceback for exeception that is raised within
+                       the context manager.
+                       None if no execption is raised.
+        Raises:
+            EnvironmentError or OSError when failed to delete temp directory.
+        """
         try:
-            self.Cleanup()
-        except Exception:  # pylint: disable=W0703
+            if self.path:
+                shutil.rmtree(self.path)
+                logger.debug("Deleted temporary dir %s", self.path)
+        except EnvironmentError as e:
+            # Ignore error if there is no exception raised
+            # within the with-clause and the EnvironementError is
+            # about problem that directory or file does not exist.
+            if not exc_type and e.errno != errno.ENOENT:
+                raise
+        except Exception as e:  # pylint: disable=W0703
             if exc_type:
-                # If an exception from inside the context was already in progress,
-                # log our cleanup exception, then allow the original to resume.
-                logger.error('While exiting %s:', self, exc_info=True)
-
-                if self.tempdir:
-                    # Log all files in tempdir at the time of the failure.
-                    try:
-                        logger.error('Directory contents were:')
-                        for name in os.listdir(self.tempdir):
-                            logger.error('  %s', name)
-                    except OSError:
-                        logger.error('  Directory did not exist.')
+                logger.error(
+                    "Encountered error while deleting %s: %s",
+                    self.path,
+                    str(e),
+                    exc_info=True)
             else:
-                # If there was not an exception from the context, raise ours.
                 raise
 
-    def __del__(self):
-        """Delete the object."""
-        self.Cleanup()
 
-def RetryOnException(retry_checker, max_retries, sleep_multiplier=0,
+def RetryOnException(retry_checker,
+                     max_retries,
+                     sleep_multiplier=0,
                      retry_backoff_factor=1):
-  """Decorater which retries the function call if |retry_checker| returns true.
+    """Decorater which retries the function call if |retry_checker| returns true.
 
-  Args:
-    retry_checker: A callback function which should take an exception instance
-                   and return True if functor(*args, **kwargs) should be retried
-                   when such exception is raised, and return False if it should
-                   not be retried.
-    max_retries: Maximum number of retries allowed.
-    sleep_multiplier: Will sleep sleep_multiplier * attempt_count seconds if
-                      retry_backoff_factor is 1.  Will sleep
-                      sleep_multiplier * (
-                          retry_backoff_factor ** (attempt_count -  1))
-                      if retry_backoff_factor != 1.
-    retry_backoff_factor: See explanation of sleep_multiplier.
+    Args:
+        retry_checker: A callback function which should take an exception instance
+                       and return True if functor(*args, **kwargs) should be retried
+                       when such exception is raised, and return False if it should
+                       not be retried.
+        max_retries: Maximum number of retries allowed.
+        sleep_multiplier: Will sleep sleep_multiplier * attempt_count seconds if
+                          retry_backoff_factor is 1.  Will sleep
+                          sleep_multiplier * (
+                              retry_backoff_factor ** (attempt_count -  1))
+                          if retry_backoff_factor != 1.
+        retry_backoff_factor: See explanation of sleep_multiplier.
 
-  Returns:
-    The function wrapper.
-  """
-  def _Wrapper(func):
-    def _FunctionWrapper(*args, **kwargs):
-      return Retry(retry_checker, max_retries, func, sleep_multiplier,
-                   retry_backoff_factor,
-                   *args, **kwargs)
-    return _FunctionWrapper
-  return _Wrapper
+    Returns:
+        The function wrapper.
+    """
+
+    def _Wrapper(func):
+        def _FunctionWrapper(*args, **kwargs):
+            return Retry(retry_checker, max_retries, func, sleep_multiplier,
+                         retry_backoff_factor, *args, **kwargs)
+
+        return _FunctionWrapper
+
+    return _Wrapper
 
 
-def Retry(retry_checker, max_retries, functor, sleep_multiplier=0,
-          retry_backoff_factor=1, *args, **kwargs):
-  """Conditionally retry a function.
+def Retry(retry_checker,
+          max_retries,
+          functor,
+          sleep_multiplier,
+          retry_backoff_factor,
+          *args,
+          **kwargs):
+    """Conditionally retry a function.
 
-  Args:
-    retry_checker: A callback function which should take an exception instance
-                   and return True if functor(*args, **kwargs) should be retried
-                   when such exception is raised, and return False if it should
-                   not be retried.
-    max_retries: Maximum number of retries allowed.
-    functor: The function to call, will call functor(*args, **kwargs).
-    sleep_multiplier: Will sleep sleep_multiplier * attempt_count seconds if
-                      retry_backoff_factor is 1.  Will sleep
-                      sleep_multiplier * (
-                          retry_backoff_factor ** (attempt_count -  1))
-                      if retry_backoff_factor != 1.
-    retry_backoff_factor: See explanation of sleep_multiplier.
-    *args: Arguments to pass to the functor.
-    **kwargs: Key-val based arguments to pass to the functor.
+    Args:
+        retry_checker: A callback function which should take an exception instance
+                       and return True if functor(*args, **kwargs) should be retried
+                       when such exception is raised, and return False if it should
+                       not be retried.
+        max_retries: Maximum number of retries allowed.
+        functor: The function to call, will call functor(*args, **kwargs).
+        sleep_multiplier: Will sleep sleep_multiplier * attempt_count seconds if
+                          retry_backoff_factor is 1.  Will sleep
+                          sleep_multiplier * (
+                              retry_backoff_factor ** (attempt_count -  1))
+                          if retry_backoff_factor != 1.
+        retry_backoff_factor: See explanation of sleep_multiplier.
+        *args: Arguments to pass to the functor.
+        **kwargs: Key-val based arguments to pass to the functor.
 
-  Returns:
-    The return value of the functor.
+    Returns:
+        The return value of the functor.
 
-  Raises:
-    Exception: The exception that functor(*args, **kwargs) throws.
-  """
-  attempt_count = 0
-  while attempt_count <= max_retries:
-    try:
-      attempt_count += 1
-      return_value = functor(*args, **kwargs)
-      return return_value
-    except Exception as e:  # pylint: disable=W0703
-      if retry_checker(e) and attempt_count <= max_retries:
-        if retry_backoff_factor != 1:
-          sleep = sleep_multiplier * (
-              retry_backoff_factor ** (attempt_count -  1))
-        else:
-          sleep = sleep_multiplier * attempt_count
-        time.sleep(sleep)
-      else:
-        raise
+    Raises:
+        Exception: The exception that functor(*args, **kwargs) throws.
+    """
+    attempt_count = 0
+    while attempt_count <= max_retries:
+        try:
+            attempt_count += 1
+            return_value = functor(*args, **kwargs)
+            return return_value
+        except Exception as e:  # pylint: disable=W0703
+            if retry_checker(e) and attempt_count <= max_retries:
+                if retry_backoff_factor != 1:
+                    sleep = sleep_multiplier * (retry_backoff_factor**
+                                                (attempt_count - 1))
+                else:
+                    sleep = sleep_multiplier * attempt_count
+                time.sleep(sleep)
+            else:
+                raise
 
 
 def RetryExceptionType(exception_types, max_retries, functor, *args, **kwargs):
-  """Retry exception if it is one of the given types.
+    """Retry exception if it is one of the given types.
 
-  Args:
-    exception_types: A tuple of exception types, e.g. (ValueError, KeyError)
-    max_retries: Max number of retries allowed.
-    functor: The function to call. Will be retried if exception is raised and
-             the exception is one of the exception_types.
-    *args: Arguments to pass to Retry function.
-    **kwargs: Key-val based arguments to pass to Retry functions.
+    Args:
+        exception_types: A tuple of exception types, e.g. (ValueError, KeyError)
+        max_retries: Max number of retries allowed.
+        functor: The function to call. Will be retried if exception is raised and
+                 the exception is one of the exception_types.
+        *args: Arguments to pass to Retry function.
+        **kwargs: Key-val based arguments to pass to Retry functions.
 
-  Returns:
-    The value returned by calling functor.
-  """
-  return Retry(lambda e: isinstance(e, exception_types), max_retries,
-               functor, *args, **kwargs)
+    Returns:
+        The value returned by calling functor.
+    """
+    return Retry(lambda e: isinstance(e, exception_types), max_retries,
+                 functor, *args, **kwargs)
 
 
 def PollAndWait(func, expected_return, timeout_exception, timeout_secs,
@@ -283,27 +271,27 @@ def CreateSshKeyPairIfNotExist(private_key_path, public_key_path):
     """
     public_key_path = os.path.expanduser(public_key_path)
     private_key_path = os.path.expanduser(private_key_path)
-    create_key = (
-            not os.path.exists(public_key_path) and
-            not os.path.exists(private_key_path))
+    create_key = (not os.path.exists(public_key_path)
+                  and not os.path.exists(private_key_path))
     if not create_key:
-        logger.debug("The ssh private key (%s) or public key (%s) already exist,"
-                     "will not automatically create the key pairs.",
-                     private_key_path, public_key_path)
+        logger.debug(
+            "The ssh private key (%s) or public key (%s) already exist,"
+            "will not automatically create the key pairs.", private_key_path,
+            public_key_path)
         return
     cmd = SSH_KEYGEN_CMD + ["-C", getpass.getuser(), "-f", private_key_path]
-    logger.info("The ssh private key (%s) and public key (%s) do not exist, "
-                "automatically creating key pair, calling: %s",
-                private_key_path, public_key_path, " ".join(cmd))
+    logger.info(
+        "The ssh private key (%s) and public key (%s) do not exist, "
+        "automatically creating key pair, calling: %s", private_key_path,
+        public_key_path, " ".join(cmd))
     try:
         subprocess.check_call(cmd, stdout=sys.stderr, stderr=sys.stdout)
     except subprocess.CalledProcessError as e:
-        raise errors.DriverError(
-                "Failed to create ssh key pair: %s" % str(e))
+        raise errors.DriverError("Failed to create ssh key pair: %s" % str(e))
     except OSError as e:
         raise errors.DriverError(
-                "Failed to create ssh key pair, please make sure "
-                "'ssh-keygen' is installed: %s" % str(e))
+            "Failed to create ssh key pair, please make sure "
+            "'ssh-keygen' is installed: %s" % str(e))
 
     # By default ssh-keygen will create a public key file
     # by append .pub to the private key file name. Rename it
@@ -314,8 +302,8 @@ def CreateSshKeyPairIfNotExist(private_key_path, public_key_path):
             os.rename(default_pub_key_path, public_key_path)
     except OSError as e:
         raise errors.DriverError(
-                "Failed to rename %s to %s: %s" %
-                (default_pub_key_path, public_key_path, str(e)))
+            "Failed to rename %s to %s: %s" % (default_pub_key_path,
+                                               public_key_path, str(e)))
 
     logger.info("Created ssh private key (%s) and public key (%s)",
                 private_key_path, public_key_path)
@@ -354,8 +342,8 @@ def VerifyRsaPubKey(rsa):
         if binary_data[int_length:int_length + type_length] != key_type:
             raise errors.DriverError("rsa key is invalid: %s" % rsa)
     except (struct.error, binascii.Error) as e:
-        raise errors.DriverError("rsa key is invalid: %s, error: %s" %
-                                 (rsa, str(e)))
+        raise errors.DriverError(
+            "rsa key is invalid: %s, error: %s" % (rsa, str(e)))
 
 
 class BatchHttpRequestExecutor(object):
@@ -407,8 +395,8 @@ class BatchHttpRequestExecutor(object):
         if isinstance(exception, self._other_retriable_errors):
             return True
 
-        if (isinstance(exception, errors.HttpError) and
-                exception.code in self._retry_http_codes):
+        if (isinstance(exception, errors.HttpError)
+                and exception.code in self._retry_http_codes):
             return True
         return False
 
@@ -432,14 +420,15 @@ class BatchHttpRequestExecutor(object):
             # If there is still retriable requests pending, raise an error
             # so that Retry will retry this function with pending_requests.
             raise errors.HasRetriableRequestsError(
-                "Retriable errors: %s" % [str(results[rid][1])
-                                          for rid in self._pending_requests])
+                "Retriable errors: %s" %
+                [str(results[rid][1]) for rid in self._pending_requests])
 
     def Execute(self):
         """Executes the requests and retry if necessary.
 
         Will populate self._final_results.
         """
+
         def _ShouldRetryHandler(exc):
             """Check if |exc| is a retriable exception.
 
@@ -458,7 +447,8 @@ class BatchHttpRequestExecutor(object):
         try:
             self._pending_requests = self._requests.copy()
             Retry(
-                _ShouldRetryHandler, max_retries=self._max_retry,
+                _ShouldRetryHandler,
+                max_retries=self._max_retry,
                 functor=self._ExecuteOnce,
                 sleep_multiplier=self._sleep,
                 retry_backoff_factor=self._backoff_factor)

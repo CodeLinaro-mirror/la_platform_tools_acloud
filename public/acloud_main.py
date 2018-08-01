@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 r"""Cloud Android Driver.
 
 This CLI manages google compute engine project for android devices.
@@ -51,8 +50,8 @@ This CLI manages google compute engine project for android devices.
 
 - Example calls:
   - Create two instances:
-  $ acloud.par create
-    --build_target gce_x86_phone-userdebug_fastbuild3c_linux \
+  $ acloud.par create_cf
+    --build_target aosp_cf_x86_phone-userdebug \
     --build_id 3744001 --num 2 --config_file /path/to/acloud.config \
     --report_file /tmp/acloud_report.json --log_file /tmp/acloud.log
 
@@ -65,25 +64,35 @@ This CLI manages google compute engine project for android devices.
 import argparse
 import getpass
 import logging
-import os
 import sys
 
+# Needed to silence oauth2client.
+logging.basicConfig(level=logging.CRITICAL)
+
+# pylint: disable=wrong-import-position
 from acloud.internal import constants
 from acloud.public import acloud_common
 from acloud.public import config
 from acloud.public import device_driver
 from acloud.public import errors
+from acloud.public.actions import create_cuttlefish_action
+from acloud.public.actions import create_goldfish_action
+from acloud.setup import setup
+from acloud.setup import setup_args
 
 LOGGING_FMT = "%(asctime)s |%(levelname)s| %(module)s:%(lineno)s| %(message)s"
 LOGGER_NAME = "acloud_main"
 
 # Commands
 CMD_CREATE = "create"
+CMD_CREATE_CUTTLEFISH = "create_cf"
+CMD_CREATE_GOLDFISH = "create_gf"
 CMD_DELETE = "delete"
 CMD_CLEANUP = "cleanup"
 CMD_SSHKEY = "project_sshkey"
 
 
+# pylint: disable=too-many-statements
 def _ParseArgs(args):
     """Parse args.
 
@@ -93,11 +102,14 @@ def _ParseArgs(args):
     Returns:
         Parsed args.
     """
-    usage = ",".join([CMD_CREATE, CMD_DELETE, CMD_CLEANUP, CMD_SSHKEY])
+    usage = ",".join([
+        CMD_CREATE, CMD_CREATE_CUTTLEFISH, CMD_DELETE, CMD_CLEANUP, CMD_SSHKEY,
+        setup_args.CMD_SETUP,
+    ])
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        usage="%(prog)s {" + usage + "} ...")
+        usage="acloud {" + usage + "} ...")
     subparsers = parser.add_subparsers()
     subparser_list = []
 
@@ -109,18 +121,19 @@ def _ParseArgs(args):
         "--build_target",
         type=str,
         dest="build_target",
-        help="Android build target, e.g. gce_x86-userdebug, "
+        help="Android build target, e.g. aosp_cf_x86_phone-userdebug, "
         "or short names: phone, tablet, or tablet_mobile.")
     create_parser.add_argument(
         "--branch",
         type=str,
         dest="branch",
         help="Android branch, e.g. mnc-dev or git_mnc-dev")
-    # TODO(fdeng): Support HEAD (the latest build)
-    create_parser.add_argument("--build_id",
-                               type=str,
-                               dest="build_id",
-                               help="Android build id, e.g. 2145099, P2804227")
+    # TODO: Support HEAD (the latest build)
+    create_parser.add_argument(
+        "--build_id",
+        type=str,
+        dest="build_id",
+        help="Android build id, e.g. 2145099, P2804227")
     create_parser.add_argument(
         "--spec",
         type=str,
@@ -128,24 +141,26 @@ def _ParseArgs(args):
         required=False,
         help="The name of a pre-configured device spec that we are "
         "going to use. Choose from: %s" % ", ".join(constants.SPEC_NAMES))
-    create_parser.add_argument("--num",
-                               type=int,
-                               dest="num",
-                               required=False,
-                               default=1,
-                               help="Number of instances to create.")
+    create_parser.add_argument(
+        "--num",
+        type=int,
+        dest="num",
+        required=False,
+        default=1,
+        help="Number of instances to create.")
     create_parser.add_argument(
         "--gce_image",
         type=str,
         dest="gce_image",
         required=False,
         help="Name of an existing compute engine image to reuse.")
-    create_parser.add_argument("--local_disk_image",
-                               type=str,
-                               dest="local_disk_image",
-                               required=False,
-                               help="Path to a local disk image to use, "
-                               "e.g /tmp/avd-system.tar.gz")
+    create_parser.add_argument(
+        "--local_disk_image",
+        type=str,
+        dest="local_disk_image",
+        required=False,
+        help="Path to a local disk image to use, "
+        "e.g /tmp/avd-system.tar.gz")
     create_parser.add_argument(
         "--no_cleanup",
         dest="no_cleanup",
@@ -167,8 +182,154 @@ def _ParseArgs(args):
         required=False,
         help="Path to a *tar.gz file where logcat logs will be saved "
         "when a device fails on boot.")
+    create_parser.add_argument(
+        "--autoconnect",
+        action="store_true",
+        dest="autoconnect",
+        required=False,
+        help=
+        "For each instance created, we will automatically creates both 2 ssh"
+        " tunnels forwarding both adb & vnc. Then add the device to adb.")
 
     subparser_list.append(create_parser)
+
+    # Command "create_cf", create cuttlefish instances
+    create_cf_parser = subparsers.add_parser(CMD_CREATE_CUTTLEFISH)
+    create_cf_parser.required = False
+    create_cf_parser.set_defaults(which=CMD_CREATE_CUTTLEFISH)
+    create_cf_parser.add_argument(
+        "--build_target",
+        type=str,
+        dest="build_target",
+        help="Android build target, should be a cuttlefish target name.")
+    create_cf_parser.add_argument(
+        "--branch",
+        type=str,
+        dest="branch",
+        help="Android branch, e.g. git_master")
+    create_cf_parser.add_argument(
+        "--build_id",
+        type=str,
+        dest="build_id",
+        help="Android build id, e.g. 2145099, P2804227")
+    create_cf_parser.add_argument(
+        "--kernel_build_id",
+        type=str,
+        dest="kernel_build_id",
+        required=False,
+        help="Android kernel build id, e.g. 4586590. This is to test a new"
+        " kernel build with a particular Android build (--build_id). If not"
+        " specified, the kernel that's bundled with the Android build would"
+        " be used.")
+    create_cf_parser.add_argument(
+        "--num",
+        type=int,
+        dest="num",
+        required=False,
+        default=1,
+        help="Number of instances to create.")
+    create_cf_parser.add_argument(
+        "--serial_log_file",
+        type=str,
+        dest="serial_log_file",
+        required=False,
+        help="Path to a *tar.gz file where serial logs will be saved "
+        "when a device fails on boot.")
+    create_cf_parser.add_argument(
+        "--logcat_file",
+        type=str,
+        dest="logcat_file",
+        required=False,
+        help="Path to a *tar.gz file where logcat logs will be saved "
+        "when a device fails on boot.")
+    create_cf_parser.add_argument(
+        "--autoconnect",
+        action="store_true",
+        dest="autoconnect",
+        required=False,
+        help=
+        "For each instance created, we will automatically creates both 2 ssh"
+        " tunnels forwarding both adb & vnc. Then add the device to adb.")
+
+    subparser_list.append(create_cf_parser)
+
+    # Command "create_gf", create goldfish instances
+    # In order to create a goldfish device we need the following parameters:
+    # 1. The emulator build we wish to use, this is the binary that emulates
+    #    an android device. See go/emu-dev for more
+    # 2. A system-image. This is the android release we wish to run on the
+    #    emulated hardware.
+    create_gf_parser = subparsers.add_parser(CMD_CREATE_GOLDFISH)
+    create_gf_parser.required = False
+    create_gf_parser.set_defaults(which=CMD_CREATE_GOLDFISH)
+    create_gf_parser.add_argument(
+        "--build_target",
+        type=str,
+        dest="build_target",
+        help="Android build target, should be a goldfish target name.")
+    create_gf_parser.add_argument(
+        "--branch",
+        type=str,
+        dest="branch",
+        help="Android branch, e.g. git_master")
+    create_gf_parser.add_argument(
+        "--build_id",
+        type=str,
+        dest="build_id",
+        help="Android build id, e.g. 4669424, P2804227")
+    create_gf_parser.add_argument(
+        "--emulator_build_id",
+        type=str,
+        dest="emulator_build_id",
+        required=False,
+        help="Emulator build used to run the images. e.g. 4669466.")
+    create_gf_parser.add_argument(
+        "--gpu",
+        type=str,
+        dest="gpu",
+        required=False,
+        default=None,
+        help="GPU accelerator to use if any."
+        " e.g. nvidia-tesla-k80, omit to use swiftshader")
+    create_gf_parser.add_argument(
+        "--num",
+        type=int,
+        dest="num",
+        required=False,
+        default=1,
+        help="Number of instances to create.")
+    create_gf_parser.add_argument(
+        "--serial_log_file",
+        type=str,
+        dest="serial_log_file",
+        required=False,
+        help="Path to a *tar.gz file where serial logs will be saved "
+        "when a device fails on boot.")
+    create_gf_parser.add_argument(
+        "--logcat_file",
+        type=str,
+        dest="logcat_file",
+        required=False,
+        help="Path to a *tar.gz file where logcat logs will be saved "
+        "when a device fails on boot.")
+    create_gf_parser.add_argument(
+        "--autoconnect",
+        action="store_true",
+        dest="autoconnect",
+        required=False,
+        help=
+        "For each instance created, we will automatically creates both 2 ssh"
+        " tunnels forwarding both adb & vnc. Then add the device to adb.")
+    create_gf_parser.add_argument(
+        "--base_image",
+        type=str,
+        dest="base_image",
+        required=False,
+        help="Name of the goldfish base image to be used to create the instance. "
+        "This will override stable_goldfish_host_image_name from config. "
+        "e.g. emu-dev-cts-061118")
+
+    subparser_list.append(create_gf_parser)
 
     # Command "Delete"
     delete_parser = subparsers.add_parser(CMD_DELETE)
@@ -213,12 +374,15 @@ def _ParseArgs(args):
         dest="ssh_rsa_path",
         required=True,
         help="Absolute path to the file that contains the public rsa key "
-             "that will be added as project-wide ssh key.")
+        "that will be added as project-wide ssh key.")
     subparser_list.append(sshkey_parser)
 
+    # Command "setup"
+    subparser_list.append(setup_args.GetSetupArgParser(subparsers))
+
     # Add common arguments.
-    for p in subparser_list:
-        acloud_common.AddCommonArguments(p)
+    for subparser in subparser_list:
+        acloud_common.AddCommonArguments(subparser)
 
     return parser.parse_args(args)
 
@@ -260,8 +424,8 @@ def _VerifyArgs(parsed_args):
             raise errors.CommandArgError(
                 "%s is not valid. Choose from: %s" %
                 (parsed_args.spec, ", ".join(constants.SPEC_NAMES)))
-        if not ((parsed_args.build_id and parsed_args.build_target) or
-                parsed_args.gce_image or parsed_args.local_disk_image):
+        if not ((parsed_args.build_id and parsed_args.build_target)
+                or parsed_args.gce_image or parsed_args.local_disk_image):
             raise errors.CommandArgError(
                 "At least one of the following should be specified: "
                 "--build_id and --build_target, or --gce_image, or "
@@ -269,12 +433,25 @@ def _VerifyArgs(parsed_args):
         if bool(parsed_args.build_id) != bool(parsed_args.build_target):
             raise errors.CommandArgError(
                 "Must specify --build_id and --build_target at the same time.")
-        if (parsed_args.serial_log_file and
-                not parsed_args.serial_log_file.endswith(".tar.gz")):
+
+    if parsed_args.which in [CMD_CREATE_CUTTLEFISH, CMD_CREATE_GOLDFISH]:
+        if not parsed_args.build_id or not parsed_args.build_target:
+            raise errors.CommandArgError(
+                "Must specify --build_id and --build_target")
+
+    if parsed_args.which == CMD_CREATE_GOLDFISH:
+        if not parsed_args.emulator_build_id:
+            raise errors.CommandArgError("Must specify --emulator_build_id")
+
+    if parsed_args.which in [
+            CMD_CREATE, CMD_CREATE_CUTTLEFISH, CMD_CREATE_GOLDFISH
+    ]:
+        if (parsed_args.serial_log_file
+                and not parsed_args.serial_log_file.endswith(".tar.gz")):
             raise errors.CommandArgError(
                 "--serial_log_file must ends with .tar.gz")
-        if (parsed_args.logcat_file and
-                not parsed_args.logcat_file.endswith(".tar.gz")):
+        if (parsed_args.logcat_file
+                and not parsed_args.logcat_file.endswith(".tar.gz")):
             raise errors.CommandArgError(
                 "--logcat_file must ends with .tar.gz")
 
@@ -326,6 +503,7 @@ def main(argv):
     # Check access.
     device_driver.CheckAccess(cfg)
 
+    report = None
     if args.which == CMD_CREATE:
         report = device_driver.CreateAndroidVirtualDevices(
             cfg,
@@ -336,23 +514,48 @@ def main(argv):
             args.local_disk_image,
             cleanup=not args.no_cleanup,
             serial_log_file=args.serial_log_file,
-            logcat_file=args.logcat_file)
+            logcat_file=args.logcat_file,
+            autoconnect=args.autoconnect)
+    elif args.which == CMD_CREATE_CUTTLEFISH:
+        report = create_cuttlefish_action.CreateDevices(
+            cfg=cfg,
+            build_target=args.build_target,
+            build_id=args.build_id,
+            kernel_build_id=args.kernel_build_id,
+            num=args.num,
+            serial_log_file=args.serial_log_file,
+            logcat_file=args.logcat_file,
+            autoconnect=args.autoconnect)
+    elif args.which == CMD_CREATE_GOLDFISH:
+        report = create_goldfish_action.CreateDevices(
+            cfg=cfg,
+            build_target=args.build_target,
+            build_id=args.build_id,
+            emulator_build_id=args.emulator_build_id,
+            gpu=args.gpu,
+            num=args.num,
+            serial_log_file=args.serial_log_file,
+            logcat_file=args.logcat_file,
+            autoconnect=args.autoconnect)
     elif args.which == CMD_DELETE:
-        report = device_driver.DeleteAndroidVirtualDevices(cfg,
-                                                           args.instance_names)
+        report = device_driver.DeleteAndroidVirtualDevices(
+            cfg, args.instance_names)
     elif args.which == CMD_CLEANUP:
         report = device_driver.Cleanup(cfg, args.expiration_mins)
     elif args.which == CMD_SSHKEY:
         report = device_driver.AddSshRsa(cfg, args.user, args.ssh_rsa_path)
+    elif args.which == setup_args.CMD_SETUP:
+        setup.Run(args)
     else:
         sys.stderr.write("Invalid command %s" % args.which)
         return 2
 
-    report.Dump(args.report_file)
-    if report.errors:
-        msg = "\n".join(report.errors)
-        sys.stderr.write("Encountered the following errors:\n%s\n" % msg)
-        return 1
+    if report:
+        report.Dump(args.report_file)
+        if report.errors:
+            msg = "\n".join(report.errors)
+            sys.stderr.write("Encountered the following errors:\n%s\n" % msg)
+            return 1
     return 0
 
 
