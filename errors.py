@@ -1,4 +1,3 @@
-#!/bin/bash
 #!/usr/bin/env python
 #
 # Copyright 2018 - The Android Open Source Project
@@ -14,6 +13,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+r"""Custom Exceptions for acloud."""
 
-source $(dirname $(realpath $0))/utils.sh
-PYTHONPATH=$(get_python_path) python ${ACLOUD_DIR}/public/acloud_main.py "$@"
+
+class SetupError(Exception):
+    """Base Setup cmd exception."""
+
+
+class PackageInstallError(SetupError):
+    """Error related to package installation."""
+
+
+class RequiredPackageNotInstalledError(SetupError):
+    """Error related to required package not installed."""
+
+
+class UnableToLocatePkgOnRepositoryError(SetupError):
+    """Error related to unable to locate package."""
+
+
+class NotSupportedPlatformError(SetupError):
+    """Error related to user using a not supported os."""
