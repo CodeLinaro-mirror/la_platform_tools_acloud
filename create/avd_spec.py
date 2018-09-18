@@ -20,11 +20,29 @@ get passed into the create classes. The inferring magic will happen within
 initialization of AVDSpec (like LKGB build id, image branch, etc).
 """
 
+import os
+import re
+import subprocess
+
+from acloud import errors
 from acloud.internal import constants
+from acloud.internal.lib import android_build_client
+from acloud.internal.lib import auth
+from acloud.public import config
 
 _BUILD_TARGET = "build_target"
 _BUILD_BRANCH = "build_branch"
 _BUILD_ID = "build_id"
+_ENV_ANDROID_PRODUCT_OUT = "ANDROID_PRODUCT_OUT"
+_BRANCH_RE = re.compile(r"^Manifest branch: (?P<branch>.+)")
+_COMMAND_REPO_IMFO = ["repo", "info"]
+# Default values for build target.
+_BRANCH_PREFIX = "aosp-"
+_TARGET_PREFIX = "aosp_"
+_DEFAULT_BUILD_BITNESS = "x86"
+_DEFAULT_BUILD_TYPE = "userdebug"
+
+ALL_SCOPES = [android_build_client.AndroidBuildClient.SCOPE]
 
 
 class AVDSpec(object):
@@ -41,9 +59,14 @@ class AVDSpec(object):
         self._autoconnect = None
         self._avd_type = None
         self._flavor = None
+        self._image_source = None
         self._instance_type = None
-        self._remote_image = None
+        self._local_image_path = None
         self._num_of_instances = None
+        self._remote_image = None
+        # Create config instance for android_build_client to query build api.
+        config_mgr = config.AcloudConfigManager(args.config_file)
+        self.cfg = config_mgr.Load()
 
         self._ProcessArgs(args)
 
@@ -59,8 +82,17 @@ class AVDSpec(object):
         representation.append(" - autoconnect: %s" % self._autoconnect)
         representation.append(" - num of instances requested: %s" %
                               self._num_of_instances)
-        representation.append(" - remote image details: %s" %
-                              self._remote_image)
+        representation.append(" - image source type: %s" %
+                              self._image_source)
+        image_summary = None
+        image_details = None
+        if self._image_source == constants.IMAGE_SRC_LOCAL:
+            image_summary = "local image path"
+            image_details = self._local_image_path
+        elif self._image_source == constants.IMAGE_SRC_REMOTE:
+            image_summary = "remote image details"
+            image_details = self._remote_image
+        representation.append(" - %s: %s" % (image_summary, image_details))
         return "\n".join(representation)
 
     def _ProcessArgs(self, args):
@@ -74,7 +106,21 @@ class AVDSpec(object):
             args: Namespace object from argparse.parse_args.
         """
         self._ProcessMiscArgs(args)
-        self._ProcessRemoteBuildArgs(args)
+        self._ProcessImageArgs(args)
+
+    def _ProcessImageArgs(self, args):
+        """ Process Image Args.
+
+        Args:
+            args: Namespace object from argparse.parse_args.
+        """
+        # If user didn't specify --local_image, infer remote image args
+        if args.local_image == "":
+            self._image_source = constants.IMAGE_SRC_REMOTE
+            self._ProcessRemoteBuildArgs(args)
+        else:
+            self._image_source = constants.IMAGE_SRC_LOCAL
+            self._ProcessLocalImageArgs(args)
 
     def _ProcessMiscArgs(self, args):
         """These args we can take as and don't belong to a group of args.
@@ -90,6 +136,30 @@ class AVDSpec(object):
                                constants.INSTANCE_TYPE_REMOTE)
         self._num_of_instances = args.num
 
+    def _ProcessLocalImageArgs(self, args):
+        """Get local image path.
+
+        -Specified local_image with no arg: Set $ANDROID_PRODUCT_OUT.
+        -Specified local_image with an arg: Set user specified path.
+
+        Args:
+            args: Namespace object from argparse.parse_args.
+
+        Raises:
+            errors.CreateError: Can't get $ANDROID_PRODUCT_OUT.
+        """
+        if args.local_image:
+            self._local_image_path = args.local_image
+        else:
+            try:
+                self._local_image_path = os.environ[_ENV_ANDROID_PRODUCT_OUT]
+            except KeyError as e:
+                raise errors.GetEnvAndroidProductOutError(
+                    "Could not get environment: %s"
+                    "\nTry to run '#. build/envsetup.sh && lunch'"
+                    % str(e)
+                )
+
     def _ProcessRemoteBuildArgs(self, args):
         """Get the remote build args.
 
@@ -102,20 +172,69 @@ class AVDSpec(object):
         # TODO: We need some logic here to determine if we should infer remote
         # build info or not.
         self._remote_image = {}
-        if args.build_target:
-            self._remote_image[_BUILD_TARGET] = args.build_target
-        else:
-            # TODO: actually figure out what we want here.
-            pass
+        self._remote_image[_BUILD_BRANCH] = args.branch
+        if not self._remote_image[_BUILD_BRANCH]:
+            self._remote_image[_BUILD_BRANCH] = self._GetBranchFromRepo()
 
-        if args.branch:
-            self._remote_image[_BUILD_BRANCH] = args.branch
-        else:
-            # TODO: infer from user workspace
-            pass
+        self._remote_image[_BUILD_TARGET] = args.build_target
+        if not self._remote_image[_BUILD_TARGET]:
+            self._remote_image[_BUILD_TARGET] = self._GetBuildTarget(args)
 
-        if args.build_id:
-            self._remote_image[_BUILD_ID] = args.build_id
-        else:
-            #  TODO: extract this info from Android Build.
-            pass
+        self._remote_image[_BUILD_ID] = args.build_id
+        if not self._remote_image[_BUILD_ID]:
+            credentials = auth.CreateCredentials(self.cfg, ALL_SCOPES)
+            build_client = android_build_client.AndroidBuildClient(credentials)
+            self._remote_image[_BUILD_ID] = build_client.GetLKGB(
+                self._remote_image[_BUILD_TARGET],
+                self._remote_image[_BUILD_BRANCH])
+
+    @staticmethod
+    def _GetBranchFromRepo():
+        """Get branch information from command "repo info".
+
+        Returns:
+            branch: String, git branch name. e.g. "aosp-master"
+
+        Raises:
+            errors.GetBranchFromRepoInfoError: Can't get branch from
+            output of "repo info".
+        """
+        repo_output = subprocess.check_output(_COMMAND_REPO_IMFO)
+        for line in repo_output.splitlines():
+            match = _BRANCH_RE.match(line)
+            if match:
+                # Android Build will expect the branch in the following format:
+                # aosp-master
+                return _BRANCH_PREFIX + match.group("branch")
+        raise errors.GetBranchFromRepoInfoError(
+            "No branch mentioned in repo info output: %s" % repo_output
+        )
+
+    @staticmethod
+    def _GetBuildTarget(args):
+        """Infer build target if user doesn't specified target name.
+
+        Target = {REPO_PREFIX}{avd_type}_{bitness}_{flavor}-
+            {DEFAULT_BUILD_TARGET_TYPE}.
+        Example target: aosp_cf_x86_phone-userdebug
+
+        Args:
+            args: Namespace object from argparse.parse_args.
+
+        Returns:
+            build_target: String, name of build target.
+        """
+        return "%s%s_%s_%s-%s" % (
+            _TARGET_PREFIX, constants.AVD_TYPES_MAPPING[args.avd_type],
+            _DEFAULT_BUILD_BITNESS, args.flavor,
+            _DEFAULT_BUILD_TYPE)
+
+    @property
+    def instance_type(self):
+        """Return the instance type."""
+        return self._instance_type
+
+    @property
+    def image_source(self):
+        """Return the image type."""
+        return self._image_source

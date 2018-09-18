@@ -31,7 +31,4 @@ class BaseAVDCreate(object):
         Args:
             avd_spec: AVDSpec object that tells us what we're going to create.
         """
-        # TODO: rewrite this function to raise NotImplemented once actual device
-        # classes are here.
-        print("We will (but not yet) create an AVD with these details: %s." %
-              avd_spec)
+        raise NotImplementedError
