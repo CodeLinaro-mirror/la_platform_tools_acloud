@@ -33,11 +33,13 @@ python_binary_host {
     main: "public/acloud_main.py",
     srcs: [
         "public/acloud_main.py",
+        "errors.py"
     ],
     data: [
         "public/data/default.config",
     ],
     libs: [
+        "acloud_create",
         "acloud_public",
         "acloud_internal",
         "acloud_proto",
@@ -49,12 +51,36 @@ python_binary_host {
     ],
 }
 
-python_library_host{
+python_test_host {
+    name: "acloud_test",
+    main: "acloud_test.py",
+    defaults: ["acloud_default"],
+    data: [
+        "public/data/default.config",
+    ],
+    srcs: [
+        "acloud_test.py",
+        "public/*_test.py",
+        "public/actions/*_test.py",
+        "internal/lib/*_test.py",
+    ],
+    libs: [
+        "acloud_public",
+        "acloud_internal",
+        "acloud_proto",
+        "py-apitools",
+        "py-dateutil",
+        "py-google-api-python-client",
+        "py-oauth2client",
+    ],
+}
+
+python_library_host {
     name: "acloud_public",
     defaults: ["acloud_default"],
     srcs: [
-         "public/*.py",
-         "public/actions/*.py",
+        "public/*.py",
+        "public/actions/*.py",
     ],
     exclude_srcs: [
         "public/*_test.py",
@@ -63,25 +89,27 @@ python_library_host{
     ]
 }
 
-python_library_host{
+python_library_host {
     name: "acloud_internal",
     defaults: ["acloud_default"],
     srcs: [
-         "internal/*.py",
-         "internal/lib/*.py",
+        "internal/*.py",
+        "internal/lib/*.py",
     ],
     exclude_srcs: [
-        "internal/*_test.py",
         "internal/lib/*_test.py",
     ]
 }
 
-python_library_host{
+python_library_host {
     name: "acloud_proto",
     defaults: ["acloud_default"],
     srcs: [
-         "internal/proto/*.py",
+        "internal/proto/*.proto",
     ],
+    proto: {
+        canonical_path_from_root: false,
+    },
 }
 
 python_library_host{
@@ -89,5 +117,16 @@ python_library_host{
     defaults: ["acloud_default"],
     srcs: [
          "setup/*.py",
+    ],
+    exclude_srcs: [
+        "setup/*_test.py",
+    ],
+}
+
+python_library_host{
+    name: "acloud_create",
+    defaults: ["acloud_default"],
+    srcs: [
+         "create/*.py",
     ],
 }

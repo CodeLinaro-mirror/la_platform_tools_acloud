@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright 2016 - The Android Open Source Project
+# Copyright 2018 - The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,28 +13,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+r"""Create entry point.
 
-from setuptools import setup
-from setuptools import find_packages
+Create will handle all the logic related to creating a local/remote instance
+an Android Virtual Device and the logic related to prepping the local/remote
+image artifacts.
+"""
 
-install_requires = [
-    'python-dateutil',
-    'protobuf',
-    'google-api-python-client'
-]
+from acloud.create import avd_spec
+from acloud.create import base_avd_create
 
-setup(
-    name='acloud',
-    version='0.1',
-    description='Cloud Android Driver',
-    license='Apache2.0',
-    packages=find_packages(),
-    include_package_data=False,
-    install_requires=install_requires,
-    url="http://www.android.com/",
-    entry_points={
-        'console_scripts': [
-            'acloud = acloud.public.__main__:main'
-        ]
-    }
-)
+
+def Run(args):
+    """Run create.
+
+    Args:
+        args: Namespace object from argparse.parse_args.
+    """
+    spec = avd_spec.AVDSpec(args)
+    avd_creator = base_avd_create.BaseAVDCreate()
+    avd_creator.Create(spec)

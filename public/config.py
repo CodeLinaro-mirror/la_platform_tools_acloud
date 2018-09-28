@@ -48,22 +48,30 @@ import os
 
 from google.protobuf import text_format
 
+# pylint: disable=no-name-in-module,import-error
 from acloud.internal.proto import internal_config_pb2
 from acloud.internal.proto import user_config_pb2
 from acloud.public import errors
 
 _CONFIG_DATA_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "data")
+_DEFAULT_CONFIG_FILE = "acloud.config"
 
 logger = logging.getLogger(__name__)
+
+
+def GetDefaultConfigFile():
+    """Get config default path."""
+    config_path = os.path.expanduser("~")
+    return os.path.join(config_path, _DEFAULT_CONFIG_FILE)
 
 
 class AcloudConfig(object):
     """A class that holds all configurations for acloud."""
 
     REQUIRED_FIELD = [
-        "project", "zone", "machine_type", "network", "storage_bucket_name",
-        "min_machine_size", "disk_image_name", "disk_image_mime_type"
+        "machine_type", "network", "min_machine_size",
+        "disk_image_name", "disk_image_mime_type"
     ]
 
     def __init__(self, usr_cfg, internal_cfg):
@@ -77,6 +85,8 @@ class AcloudConfig(object):
         # pylint: disable=invalid-name
         self.service_account_private_key_path = (
             usr_cfg.service_account_private_key_path)
+        self.service_account_json_private_key_path = (
+            usr_cfg.service_account_json_private_key_path)
         self.creds_cache_file = internal_cfg.creds_cache_file
         self.user_agent = internal_cfg.user_agent
         self.client_id = usr_cfg.client_id
@@ -176,6 +186,9 @@ class AcloudConfig(object):
                     parsed_args.spec, "")
         if parsed_args.email:
             self.service_account_name = parsed_args.email
+        if parsed_args.service_account_json_private_key_path:
+            self.service_account_json_private_key_path = (
+                parsed_args.service_account_json_private_key_path)
         if parsed_args.which == "create_gf" and parsed_args.base_image:
             self.stable_goldfish_host_image_name = parsed_args.base_image
 
@@ -202,7 +215,7 @@ class AcloudConfigManager(object):
     def __init__(self,
                  user_config_path,
                  internal_config_path=_DEFAULT_INTERNAL_CONFIG_PATH):
-        """Initialize.
+        """Initialize with user specified paths to configs.
 
         Args:
             user_config_path: path to the user config.
@@ -212,19 +225,41 @@ class AcloudConfigManager(object):
         self._internal_config_path = internal_config_path
 
     def Load(self):
-        """Load the configurations."""
+        """Load the configurations.
+
+        Load user config with some special design.
+        1. User specified user config:
+            a.User config exist: Load config.
+            b.User config didn't exist: Raise exception.
+        2. User didn't specify user config, use default config:
+            a.Default config exist: Load config.
+            b.Default config didn't exist: provide empty usr_cfg.
+        """
         internal_cfg = None
         usr_cfg = None
         try:
             with open(self._internal_config_path) as config_file:
                 internal_cfg = self.LoadConfigFromProtocolBuffer(
                     config_file, internal_config_pb2.InternalConfig)
-
-            with open(self._user_config_path, "r") as config_file:
-                usr_cfg = self.LoadConfigFromProtocolBuffer(
-                    config_file, user_config_pb2.UserConfig)
         except OSError as e:
             raise errors.ConfigError("Could not load config files: %s" % str(e))
+        # Load user config file
+        if self._user_config_path:
+            if os.path.exists(self._user_config_path):
+                with open(self._user_config_path, "r") as config_file:
+                    usr_cfg = self.LoadConfigFromProtocolBuffer(
+                        config_file, user_config_pb2.UserConfig)
+            else:
+                raise errors.ConfigError("The file doesn't exist: %s" %
+                                         (self._user_config_path))
+        else:
+            self._user_config_path = GetDefaultConfigFile()
+            if os.path.exists(self._user_config_path):
+                with open(self._user_config_path, "r") as config_file:
+                    usr_cfg = self.LoadConfigFromProtocolBuffer(
+                        config_file, user_config_pb2.UserConfig)
+            else:
+                usr_cfg = user_config_pb2.UserConfig()
         return AcloudConfig(usr_cfg, internal_cfg)
 
     @staticmethod

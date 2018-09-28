@@ -16,8 +16,6 @@
 
 """Common code used by both acloud and acloud_kernel tools."""
 
-DEFAULT_CONFIG_FILE = "acloud.config"
-
 
 def AddCommonArguments(parser):
     """Adds arguments common to parsers.
@@ -33,9 +31,14 @@ def AddCommonArguments(parser):
         "--config_file",
         type=str,
         dest="config_file",
-        default=DEFAULT_CONFIG_FILE,
+        default=None,
         help="Path to the config file, default to acloud.config"
         "in the current working directory")
+    parser.add_argument(
+        "--service_account_json_private_key_path",
+        type=str,
+        dest="service_account_json_private_key_path",
+        help="Path to service account's json private key file.")
     parser.add_argument("--report_file",
                         type=str,
                         dest="report_file",
