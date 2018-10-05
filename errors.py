@@ -34,3 +34,31 @@ class UnableToLocatePkgOnRepositoryError(SetupError):
 
 class NotSupportedPlatformError(SetupError):
     """Error related to user using a not supported os."""
+
+
+class ParseBucketRegionError(SetupError):
+    """Raised when parsing bucket information without region information."""
+
+
+class CreateError(Exception):
+    """Base Create cmd exception."""
+
+
+class GetEnvAndroidProductOutError(CreateError):
+    """Can't get client environment ANDROID_PRODUCT_OUT."""
+
+
+class CheckPathError(CreateError):
+    """Path does not exist."""
+
+
+class UnsupportedInstanceImageType(CreateError):
+    """Unsupported create action for given instance/image type."""
+
+
+class GetBuildIDError(CreateError):
+    """Can't get build id from Android Build."""
+
+
+class GetBranchFromRepoInfoError(CreateError):
+    """Can't get branch information from output of #'repo info'."""
