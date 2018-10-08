@@ -21,6 +21,7 @@ Defines the create arg parser that holds create specific args.
 import os
 
 from acloud import errors
+from acloud.create import create_common
 from acloud.internal import constants
 
 
@@ -47,28 +48,36 @@ def AddCommonCreateArgs(parser):
         dest="serial_log_file",
         required=False,
         help="Path to a *tar.gz file where serial logs will be saved "
-        "when a device fails on boot.")
+             "when a device fails on boot.")
     parser.add_argument(
         "--logcat_file",
         type=str,
         dest="logcat_file",
         required=False,
         help="Path to a *tar.gz file where logcat logs will be saved "
-        "when a device fails on boot.")
+             "when a device fails on boot.")
     parser.add_argument(
         "--autoconnect",
         action="store_true",
         dest="autoconnect",
         required=False,
-        help=
-        "For each instance created, we will automatically creates both 2 ssh"
-        " tunnels forwarding both adb & vnc. Then add the device to adb.")
+        help="For each instance created, we will automatically creates both 2 "
+             "ssh tunnels forwarding both adb & vnc. Then add the device to "
+             "adb.")
     parser.add_argument(
         "--no-autoconnect",
         action="store_false",
         dest="autoconnect",
         required=False)
     parser.set_defaults(autoconnect=True)
+    parser.add_argument(
+        "--report_internal_ip",
+        action="store_true",
+        dest="report_internal_ip",
+        required=False,
+        help="Report internal ip of the created instance instead of external "
+             "ip. Using the internal ip is valid when connecting from another "
+             "GCE instance.")
 
 
 def GetCreateArgParser(subparser):
@@ -108,7 +117,7 @@ def GetCreateArgParser(subparser):
         type=str,
         dest="build_target",
         help="Android build target, e.g. aosp_cf_x86_phone-userdebug, "
-        "or short names: phone, tablet, or tablet_mobile.")
+             "or short names: phone, tablet, or tablet_mobile.")
     create_parser.add_argument(
         "--branch",
         type=str,
@@ -120,25 +129,27 @@ def GetCreateArgParser(subparser):
         dest="build_id",
         help="Android build id, e.g. 2145099, P2804227")
     create_parser.add_argument(
-        "--spec",
-        type=str,
-        dest="spec",
-        required=False,
-        help="The name of a pre-configured device spec that we are "
-        "going to use. Choose from: %s" % ", ".join(constants.SPEC_NAMES))
-    create_parser.add_argument(
         "--gce_image",
         type=str,
         dest="gce_image",
         required=False,
         help="Name of an existing compute engine image to reuse.")
     create_parser.add_argument(
+        "--kernel_build_id",
+        type=str,
+        dest="kernel_build_id",
+        required=False,
+        help="Android kernel build id, e.g. 4586590. This is to test a new"
+        " kernel build with a particular Android build (--build_id). If not"
+        " specified, the kernel that's bundled with the Android build would"
+        " be used.")
+    create_parser.add_argument(
         "--local_disk_image",
         type=str,
         dest="local_disk_image",
         required=False,
         help="Path to a local disk image to use, "
-        "e.g /tmp/avd-system.tar.gz")
+             "e.g /tmp/avd-system.tar.gz")
     create_parser.add_argument(
         "--local_image",
         type=str,
@@ -154,7 +165,24 @@ def GetCreateArgParser(subparser):
         default=False,
         action="store_true",
         help="Do not clean up temporary disk image and compute engine image. "
-        "For debugging purposes.")
+             "For debugging purposes.")
+    # User should not specify --spec and --hw_property at the same time.
+    hw_spec_group = create_parser.add_mutually_exclusive_group()
+    hw_spec_group.add_argument(
+        "--hw_property",
+        type=str,
+        dest="hw_property",
+        required=False,
+        help="Supported HW properties and example values: %s" %
+        constants.HW_PROPERTIES_CMD_EXAMPLE)
+    hw_spec_group.add_argument(
+        "--spec",
+        type=str,
+        dest="spec",
+        required=False,
+        choices=constants.SPEC_NAMES,
+        help="The name of a pre-configured device spec that we are "
+        "going to use.")
 
     AddCommonCreateArgs(create_parser)
     return create_parser
@@ -172,3 +200,10 @@ def VerifyArgs(args):
     if args.local_image and not os.path.exists(args.local_image):
         raise errors.CheckPathError(
             "Specified path doesn't exist: %s" % args.local_image)
+
+    hw_properties = create_common.ParseHWPropertyArgs(args.hw_property)
+    for key in hw_properties:
+        if key not in constants.HW_PROPERTIES:
+            raise errors.InvalidHWPropertyError(
+                "[%s] is an invalid hw property, supported values are:%s. "
+                % (key, constants.HW_PROPERTIES))

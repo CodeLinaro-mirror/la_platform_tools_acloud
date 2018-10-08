@@ -23,7 +23,7 @@ from acloud.internal import constants
 
 # pylint: disable=invalid-name,protected-access
 class AvdSpecTest(unittest.TestCase):
-    """Test GCP Setup steps."""
+    """Test avd_spec methods."""
 
     def setUp(self):
         """Initialize new avd_spec.AVDSpec."""
@@ -32,18 +32,19 @@ class AvdSpecTest(unittest.TestCase):
         self.args.config_file = ""
         self.AvdSpec = avd_spec.AVDSpec(self.args)
 
+    # pylint: disable=protected-access
     def testProcessLocalImageArgs(self):
         """Test process args.local_image."""
         # Specified local_image with an arg
         self.args.local_image = "test_path"
         self.AvdSpec._ProcessLocalImageArgs(self.args)
-        self.assertEqual(self.AvdSpec._local_image_path, "test_path")
+        self.assertEqual(self.AvdSpec._local_image_dir, "test_path")
 
         # Specified local_image with no arg
         self.args.local_image = None
         with mock.patch.dict("os.environ", {"ANDROID_PRODUCT_OUT": "test_environ"}):
             self.AvdSpec._ProcessLocalImageArgs(self.args)
-            self.assertEqual(self.AvdSpec._local_image_path, "test_environ")
+            self.assertEqual(self.AvdSpec._local_image_dir, "test_environ")
 
     def testProcessImageArgs(self):
         """Test process image source."""
@@ -51,13 +52,13 @@ class AvdSpecTest(unittest.TestCase):
         self.args.local_image = ""
         self.AvdSpec._ProcessImageArgs(self.args)
         self.assertEqual(self.AvdSpec._image_source, constants.IMAGE_SRC_REMOTE)
-        self.assertEqual(self.AvdSpec._local_image_path, None)
+        self.assertEqual(self.AvdSpec._local_image_dir, None)
 
         # Specified local_image with an arg, image source is from local
         self.args.local_image = "test_path"
         self.AvdSpec._ProcessImageArgs(self.args)
         self.assertEqual(self.AvdSpec._image_source, constants.IMAGE_SRC_LOCAL)
-        self.assertEqual(self.AvdSpec._local_image_path, "test_path")
+        self.assertEqual(self.AvdSpec._local_image_dir, "test_path")
         self.AvdSpec = avd_spec.AVDSpec(self.args)
 
     @mock.patch("subprocess.check_output")
@@ -85,6 +86,42 @@ class AvdSpecTest(unittest.TestCase):
         self.assertEqual(
             self.AvdSpec._GetBuildTarget(self.args),
             "aosp_cf_x86_phone-userdebug")
+
+    # pylint: disable=protected-access
+    def testProcessHWPropertyWithInvalidArgs(self):
+        """Test _ProcessHWPropertyArgs with invalid args."""
+        # Checking wrong resolution.
+        args = mock.MagicMock()
+        args.hw_property = "cpu:3,resolution:1280"
+        with self.assertRaises(errors.InvalidHWPropertyError):
+            self.AvdSpec._ProcessHWPropertyArgs(args)
+
+        # Checking property should be int.
+        args = mock.MagicMock()
+        args.hw_property = "cpu:3,dpi:fake"
+        with self.assertRaises(errors.InvalidHWPropertyError):
+            self.AvdSpec._ProcessHWPropertyArgs(args)
+
+        # Checking disk property should be with 'g' suffix.
+        args = mock.MagicMock()
+        args.hw_property = "cpu:3,disk:2"
+        with self.assertRaises(errors.InvalidHWPropertyError):
+            self.AvdSpec._ProcessHWPropertyArgs(args)
+
+        # Checking memory property should be with 'g' suffix.
+        args = mock.MagicMock()
+        args.hw_property = "cpu:3,memory:2"
+        with self.assertRaises(errors.InvalidHWPropertyError):
+            self.AvdSpec._ProcessHWPropertyArgs(args)
+
+    # pylint: disable=protected-access
+    def testParseHWPropertyStr(self):
+        """Test _ParseHWPropertyStr."""
+        expected_dict = {"cpu": "2", "x_res": "1080", "y_res": "1920",
+                         "dpi": "240", "memory": "4096", "disk": "4096"}
+        args_str = "cpu:2,resolution:1080x1920,dpi:240,memory:4g,disk:4g"
+        result_dict = self.AvdSpec._ParseHWPropertyStr(args_str)
+        self.assertTrue(expected_dict == result_dict)
 
 
 if __name__ == "__main__":

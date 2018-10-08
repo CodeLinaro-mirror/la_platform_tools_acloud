@@ -89,7 +89,7 @@ from acloud.create import create_args
 from acloud.setup import setup
 from acloud.setup import setup_args
 
-LOGGING_FMT = "%(asctime)s |%(levelname)s| %(name)s:%(lineno)s| %(message)s"
+LOGGING_FMT = "%(asctime)s |%(levelname)s| %(module)s:%(lineno)s| %(message)s"
 ACLOUD_LOGGER = "acloud"
 
 # Commands
@@ -415,10 +415,7 @@ def main(argv):
     #args = _TranslateAlias(args)
     _VerifyArgs(args)
 
-    config_mgr = config.AcloudConfigManager(args.config_file)
-    cfg = config_mgr.Load()
-    cfg.OverrideWithArgs(args)
-
+    cfg = config.GetAcloudConfig(args)
     # TODO: Move this check into the functions it is actually needed.
     # Check access.
     # device_driver.CheckAccess(cfg)
@@ -436,7 +433,8 @@ def main(argv):
             cleanup=not args.no_cleanup,
             serial_log_file=args.serial_log_file,
             logcat_file=args.logcat_file,
-            autoconnect=args.autoconnect)
+            autoconnect=args.autoconnect,
+            report_internal_ip=args.report_internal_ip)
     elif args.which == create_args.CMD_CREATE:
         create.Run(args)
     elif args.which == CMD_CREATE_CUTTLEFISH:
@@ -448,7 +446,8 @@ def main(argv):
             num=args.num,
             serial_log_file=args.serial_log_file,
             logcat_file=args.logcat_file,
-            autoconnect=args.autoconnect)
+            autoconnect=args.autoconnect,
+            report_internal_ip=args.report_internal_ip)
     elif args.which == CMD_CREATE_GOLDFISH:
         report = create_goldfish_action.CreateDevices(
             cfg=cfg,
@@ -460,7 +459,8 @@ def main(argv):
             serial_log_file=args.serial_log_file,
             logcat_file=args.logcat_file,
             autoconnect=args.autoconnect,
-            branch=args.branch)
+            branch=args.branch,
+            report_internal_ip=args.report_internal_ip)
     elif args.which == CMD_DELETE:
         report = device_driver.DeleteAndroidVirtualDevices(
             cfg, args.instance_names)

@@ -28,6 +28,11 @@ SPEC_NAMES = {
 DEFAULT_SERIAL_PORT = 1
 LOGCAT_SERIAL_PORT = 2
 
+# Remote image parameters
+BUILD_TARGET = "build_target"
+BUILD_BRANCH = "build_branch"
+BUILD_ID = "build_id"
+
 # AVD types
 TYPE_GCE = "gce"
 TYPE_CF = "cuttlefish"
@@ -60,5 +65,24 @@ ALL_FLAVORS = [
     FLAVOR_PHONE, FLAVOR_AUTO, FLAVOR_WEAR, FLAVOR_TV, FLAVOR_IOT,
     FLAVOR_TABLET, FLAVOR_TABLET_3G
 ]
+
+# HW Property
+HW_ALIAS_CPUS = "cpu"
+HW_ALIAS_RESOLUTION = "resolution"
+HW_ALIAS_DPI = "dpi"
+HW_ALIAS_MEMORY = "memory"
+HW_ALIAS_DISK = "disk"
+HW_PROPERTIES_CMD_EXAMPLE = (
+    " %s:2,%s:1280x700,%s:160,%s:2g,%s:2g" %
+    (HW_ALIAS_CPUS,
+     HW_ALIAS_RESOLUTION,
+     HW_ALIAS_DPI,
+     HW_ALIAS_MEMORY,
+     HW_ALIAS_DISK)
+)
+HW_PROPERTIES = [HW_ALIAS_CPUS, HW_ALIAS_RESOLUTION, HW_ALIAS_DPI,
+                 HW_ALIAS_MEMORY, HW_ALIAS_DISK]
+HW_X_RES = "x_res"
+HW_Y_RES = "y_res"
 
 USER_ANSWER_YES = {"y", "yes", "Y"}
