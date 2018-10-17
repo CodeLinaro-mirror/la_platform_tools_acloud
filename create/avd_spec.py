@@ -20,29 +20,38 @@ get passed into the create classes. The inferring magic will happen within
 initialization of AVDSpec (like LKGB build id, image branch, etc).
 """
 
+import logging
 import os
 import re
 import subprocess
 
 from acloud import errors
+from acloud.create import create_common
 from acloud.internal import constants
 from acloud.internal.lib import android_build_client
 from acloud.internal.lib import auth
 from acloud.public import config
 
+# Default values for build target.
+_BRANCH_PREFIX = "aosp-"
+_BRANCH_RE = re.compile(r"^Manifest branch: (?P<branch>.+)")
 _BUILD_TARGET = "build_target"
 _BUILD_BRANCH = "build_branch"
 _BUILD_ID = "build_id"
-_ENV_ANDROID_PRODUCT_OUT = "ANDROID_PRODUCT_OUT"
-_BRANCH_RE = re.compile(r"^Manifest branch: (?P<branch>.+)")
 _COMMAND_REPO_IMFO = ["repo", "info"]
-# Default values for build target.
-_BRANCH_PREFIX = "aosp-"
-_TARGET_PREFIX = "aosp_"
 _DEFAULT_BUILD_BITNESS = "x86"
 _DEFAULT_BUILD_TYPE = "userdebug"
+_ENV_ANDROID_PRODUCT_OUT = "ANDROID_PRODUCT_OUT"
+_TARGET_PREFIX = "aosp_"
+_RE_GBSIZE = re.compile(r"^(?P<gb_size>\d+)g$", re.IGNORECASE)
+_RE_INT = re.compile(r"^\d+$")
+_RE_RES = re.compile(r"^(?P<x_res>\d+)x(?P<y_res>\d+)$")
+_X_RES = "x_res"
+_Y_RES = "y_res"
 
 ALL_SCOPES = [android_build_client.AndroidBuildClient.SCOPE]
+
+logger = logging.getLogger(__name__)
 
 
 class AVDSpec(object):
@@ -61,13 +70,13 @@ class AVDSpec(object):
         self._flavor = None
         self._image_source = None
         self._instance_type = None
-        self._local_image_path = None
+        self._kernel_build_id = None
+        self._local_image_dir = None
         self._num_of_instances = None
         self._remote_image = None
+        self._hw_property = None
         # Create config instance for android_build_client to query build api.
-        config_mgr = config.AcloudConfigManager(args.config_file)
-        self.cfg = config_mgr.Load()
-
+        self._cfg = config.GetAcloudConfig(args)
         self._ProcessArgs(args)
 
     def __repr__(self):
@@ -87,12 +96,14 @@ class AVDSpec(object):
         image_summary = None
         image_details = None
         if self._image_source == constants.IMAGE_SRC_LOCAL:
-            image_summary = "local image path"
-            image_details = self._local_image_path
+            image_summary = "local image dir"
+            image_details = self._local_image_dir
         elif self._image_source == constants.IMAGE_SRC_REMOTE:
             image_summary = "remote image details"
             image_details = self._remote_image
         representation.append(" - %s: %s" % (image_summary, image_details))
+        representation.append(" - hw properties: %s" %
+                              self._hw_property)
         return "\n".join(representation)
 
     def _ProcessArgs(self, args):
@@ -107,6 +118,7 @@ class AVDSpec(object):
         """
         self._ProcessMiscArgs(args)
         self._ProcessImageArgs(args)
+        self._ProcessHWPropertyArgs(args)
 
     def _ProcessImageArgs(self, args):
         """ Process Image Args.
@@ -122,6 +134,68 @@ class AVDSpec(object):
             self._image_source = constants.IMAGE_SRC_LOCAL
             self._ProcessLocalImageArgs(args)
 
+    @staticmethod
+    def _ParseHWPropertyStr(hw_property_str):
+        """Parse string to dict.
+
+        Args:
+            hw_property_str: A hw properties string.
+
+        Returns:
+            Dict converted from a string.
+
+        Raises:
+            error.MalformedHWPropertyError: If hw_property_str is malformed.
+        """
+        hw_dict = create_common.ParseHWPropertyArgs(hw_property_str)
+        arg_hw_properties = {}
+        for key, value in hw_dict.items():
+            # Parsing HW properties int to avdspec.
+            if key == constants.HW_ALIAS_RESOLUTION:
+                match = _RE_RES.match(value)
+                if match:
+                    arg_hw_properties[_X_RES] = match.group("x_res")
+                    arg_hw_properties[_Y_RES] = match.group("y_res")
+                else:
+                    raise errors.InvalidHWPropertyError(
+                        "[%s] is an invalid resolution. Example:1280x800" % value)
+            elif key in [constants.HW_ALIAS_MEMORY, constants.HW_ALIAS_DISK]:
+                match = _RE_GBSIZE.match(value)
+                if match:
+                    arg_hw_properties[key] = str(
+                        int(match.group("gb_size")) * 1024)
+                else:
+                    raise errors.InvalidHWPropertyError(
+                        "Expected gb size.[%s] is not allowed. Example:4g" % value)
+            elif key in [constants.HW_ALIAS_CPUS, constants.HW_ALIAS_DPI]:
+                if not _RE_INT.match(value):
+                    raise errors.InvalidHWPropertyError(
+                        "%s value [%s] is not an integer." % (key, value))
+                arg_hw_properties[key] = value
+
+        return arg_hw_properties
+
+    def _ProcessHWPropertyArgs(self, args):
+        """Get the HW properties from argparse.parse_args.
+
+        This method will initialize _hw_property in the following
+        manner:
+        1. Get default hw properties from config.
+        2. Override by hw_property args.
+
+        Args:
+            args: Namespace object from argparse.parse_args.
+        """
+        self._hw_property = {}
+        self._hw_property = self._ParseHWPropertyStr(self._cfg.hw_property)
+        logger.debug("Default hw property for [%s] flavor: %s", self._flavor,
+                     self._hw_property)
+
+        if args.hw_property:
+            arg_hw_property = self._ParseHWPropertyStr(args.hw_property)
+            logger.debug("Use custom hw property: %s", arg_hw_property)
+            self._hw_property.update(arg_hw_property)
+
     def _ProcessMiscArgs(self, args):
         """These args we can take as and don't belong to a group of args.
 
@@ -135,6 +209,7 @@ class AVDSpec(object):
                                if args.local_instance else
                                constants.INSTANCE_TYPE_REMOTE)
         self._num_of_instances = args.num
+        self._kernel_build_id = args.kernel_build_id
 
     def _ProcessLocalImageArgs(self, args):
         """Get local image path.
@@ -149,15 +224,15 @@ class AVDSpec(object):
             errors.CreateError: Can't get $ANDROID_PRODUCT_OUT.
         """
         if args.local_image:
-            self._local_image_path = args.local_image
+            self._local_image_dir = args.local_image
         else:
             try:
-                self._local_image_path = os.environ[_ENV_ANDROID_PRODUCT_OUT]
+                self._local_image_dir = os.environ[_ENV_ANDROID_PRODUCT_OUT]
             except KeyError as e:
                 raise errors.GetEnvAndroidProductOutError(
                     "Could not get environment: %s"
-                    "\nTry to run '#. build/envsetup.sh && lunch'"
-                    % str(e)
+                    "\nTry to run '#. build/envsetup.sh && lunch'" %
+                    str(e)
                 )
 
     def _ProcessRemoteBuildArgs(self, args):
@@ -182,11 +257,11 @@ class AVDSpec(object):
 
         self._remote_image[_BUILD_ID] = args.build_id
         if not self._remote_image[_BUILD_ID]:
-            credentials = auth.CreateCredentials(self.cfg, ALL_SCOPES)
+            credentials = auth.CreateCredentials(self._cfg, ALL_SCOPES)
             build_client = android_build_client.AndroidBuildClient(credentials)
-            self._remote_image[_BUILD_ID] = build_client.GetLKGB(
-                self._remote_image[_BUILD_TARGET],
-                self._remote_image[_BUILD_BRANCH])
+            self._remote_image[constants.BUILD_ID] = build_client.GetLKGB(
+                self._remote_image[constants.BUILD_TARGET],
+                self._remote_image[constants.BUILD_BRANCH])
 
     @staticmethod
     def _GetBranchFromRepo():
@@ -238,3 +313,48 @@ class AVDSpec(object):
     def image_source(self):
         """Return the image type."""
         return self._image_source
+
+    @property
+    def hw_property(self):
+        """Return the hw_property."""
+        return self._hw_property
+
+    @property
+    def local_image_dir(self):
+        """Return local image dir."""
+        return self._local_image_dir
+
+    @property
+    def avd_type(self):
+        """Return the avd type."""
+        return self._avd_type
+
+    @property
+    def autoconnect(self):
+        """Return autoconnect."""
+        return self._autoconnect
+
+    @property
+    def remote_image(self):
+        """Return the remote image."""
+        return self._remote_image
+
+    @property
+    def num(self):
+        """Return num of instances."""
+        return self._num_of_instances
+
+    @property
+    def kernel_build_id(self):
+        """Return kernel build id."""
+        return self._kernel_build_id
+
+    @property
+    def flavor(self):
+        """Return flavor."""
+        return self._flavor
+
+    @property
+    def cfg(self):
+        """Return cfg instance."""
+        return self._cfg

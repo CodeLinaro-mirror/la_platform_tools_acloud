@@ -26,6 +26,7 @@ and it only keeps states about authentication. ComputeClient should be very
 generic, and only knows how to talk to Compute Engine APIs.
 """
 # pylint: disable=too-many-lines
+import collections
 import copy
 import functools
 import logging
@@ -46,6 +47,8 @@ BASE_DISK_ARGS = {
     "autoDelete": True,
     "initializeParams": {},
 }
+
+IP = collections.namedtuple("IP", ["external", "internal"])
 
 
 class OperationScope(object):
@@ -1237,25 +1240,30 @@ class ComputeClient(base_cloud_client.BaseCloudApiClient):
             zone: A string representing a zone, e.g. "us-central1-f"
 
         Returns:
-            1 if size of the first type is greater than the second type.
-            2 if size of the first type is smaller than the second type.
-            0 if they are equal.
+            -1 if any metric of machine size of the first type is smaller than
+                the second type.
+            0 if all metrics of machine size are equal.
+            1 if at least one metric of machine size of the first type is
+                greater than the second type and all metrics of first type are
+                greater or equal to the second type.
 
         Raises:
             errors.DriverError: For malformed response.
         """
         machine_info_1 = self.GetMachineType(machine_type_1, zone)
         machine_info_2 = self.GetMachineType(machine_type_2, zone)
+        result = 0
         for metric in self.MACHINE_SIZE_METRICS:
             if metric not in machine_info_1 or metric not in machine_info_2:
                 raise errors.DriverError(
                     "Malformed machine size record: Can't find '%s' in %s or %s"
                     % (metric, machine_info_1, machine_info_2))
-            if machine_info_1[metric] - machine_info_2[metric] > 0:
-                return 1
-            elif machine_info_1[metric] - machine_info_2[metric] < 0:
+            cmp_result = machine_info_1[metric] - machine_info_2[metric]
+            if  cmp_result < 0:
                 return -1
-        return 0
+            elif cmp_result > 0:
+                result = 1
+        return result
 
     def GetSerialPortOutput(self, instance, zone, port=1):
         """Get serial port output.
@@ -1313,13 +1321,12 @@ class ComputeClient(base_cloud_client.BaseCloudApiClient):
             zone: String, name of the zone.
 
         Returns:
-            string, IP of the instance.
+            NamedTuple of (internal, external) IP of the instance.
         """
-        # TODO(fdeng): This is for accessing external IP.
-        # We should handle internal IP as well when the script is running
-        # on a GCE instance in the same network of |instance|.
         instance = self.GetInstance(instance, zone)
-        return instance["networkInterfaces"][0]["accessConfigs"][0]["natIP"]
+        internal_ip = instance["networkInterfaces"][0]["networkIP"]
+        external_ip = instance["networkInterfaces"][0]["accessConfigs"][0]["natIP"]
+        return IP(internal=internal_ip, external=external_ip)
 
     def SetCommonInstanceMetadata(self, body):
         """Set project-wide metadata.
