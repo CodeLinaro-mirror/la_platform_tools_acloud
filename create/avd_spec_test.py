@@ -61,19 +61,28 @@ class AvdSpecTest(unittest.TestCase):
         self.assertEqual(self.AvdSpec._local_image_dir, "test_path")
         self.AvdSpec = avd_spec.AVDSpec(self.args)
 
+    @mock.patch.object(avd_spec.AVDSpec, "_GetGitRemote")
     @mock.patch("subprocess.check_output")
-    def testGetBranchFromRepo(self, mock_repo):
+    def testGetBranchFromRepo(self, mock_repo, mock_gitremote):
         """Test get branch name from repo info."""
+        # Check aosp repo gets proper branch prefix.
+        mock_gitremote.return_value = "aosp"
         mock_repo.return_value = "Manifest branch: master"
         self.assertEqual(self.AvdSpec._GetBranchFromRepo(), "aosp-master")
+
+        # Check default repo gets default branch prefix.
+        mock_gitremote.return_value = ""
+        mock_repo.return_value = "Manifest branch: master"
+        self.assertEqual(self.AvdSpec._GetBranchFromRepo(), "git_master")
 
         mock_repo.return_value = "Manifest branch:"
         with self.assertRaises(errors.GetBranchFromRepoInfoError):
             self.AvdSpec._GetBranchFromRepo()
 
+    # pylint: disable=protected-access
     def testGetBuildTarget(self):
         """Test get build target name."""
-        self.AvdSpec._remote_image[avd_spec._BUILD_BRANCH] = "master"
+        self.AvdSpec._remote_image[avd_spec._BUILD_BRANCH] = "aosp-master"
         self.args.flavor = constants.FLAVOR_IOT
         self.args.avd_type = constants.TYPE_GCE
         self.assertEqual(
@@ -86,6 +95,13 @@ class AvdSpecTest(unittest.TestCase):
         self.assertEqual(
             self.AvdSpec._GetBuildTarget(self.args),
             "aosp_cf_x86_phone-userdebug")
+
+        self.AvdSpec._remote_image[avd_spec._BUILD_BRANCH] = "git_branch"
+        self.args.flavor = constants.FLAVOR_PHONE
+        self.args.avd_type = constants.TYPE_CF
+        self.assertEqual(
+            self.AvdSpec._GetBuildTarget(self.args),
+            "cf_x86_phone-userdebug")
 
     # pylint: disable=protected-access
     def testProcessHWPropertyWithInvalidArgs(self):

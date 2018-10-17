@@ -16,21 +16,27 @@
 """Common Utilities."""
 
 from __future__ import print_function
+
+from distutils.spawn import find_executable
 import base64
 import binascii
+import collections
 import errno
 import getpass
 import logging
 import os
 import shutil
 import struct
+import socket
 import subprocess
 import sys
 import tarfile
 import tempfile
 import time
 import uuid
+import zipfile
 
+from acloud import errors as root_errors
 from acloud.internal import constants
 from acloud.public import errors
 
@@ -41,6 +47,17 @@ SSH_KEYGEN_PUB_CMD = ["ssh-keygen", "-y"]
 DEFAULT_RETRY_BACKOFF_FACTOR = 1
 DEFAULT_SLEEP_MULTIPLIER = 0
 
+SSH_BIN = "ssh"
+_SSH_TUNNEL_ARGS = ("-i %(rsa_key_file)s -o UserKnownHostsFile=/dev/null "
+                    "-o StrictHostKeyChecking=no "
+                    "-L %(vnc_port)d:127.0.0.1:%(target_vnc_port)d "
+                    "-L %(adb_port)d:127.0.0.1:%(target_adb_port)d "
+                    "-N -f -l %(ssh_user)s %(ip_addr)s")
+ADB_BIN = "adb"
+_ADB_CONNECT_ARGS = "connect 127.0.0.1:%(adb_port)d"
+# Store the ports that vnc/adb are forwarded to, both are integers.
+ForwardedPorts = collections.namedtuple("ForwardedPorts", [constants.VNC_PORT,
+                                                           constants.ADB_PORT])
 
 class TempDir(object):
     """A context manager that ceates a temporary directory.
@@ -363,6 +380,28 @@ def VerifyRsaPubKey(rsa):
         raise errors.DriverError(
             "rsa key is invalid: %s, error: %s" % (rsa, str(e)))
 
+def Decompress(sourcefile, dest=None):
+    """Decompress .zip or .tar.gz.
+
+    Args:
+        sourcefile: A string, a source file path to decompress.
+        dest: A string, a folder path as decompress destination.
+
+    Raises:
+        errors.UnsupportedCompressionFileType: Not supported extension.
+    """
+    logger.info("Start to decompress %s!", sourcefile)
+    dest_path = dest if dest else "."
+    if sourcefile.endswith(".tar.gz"):
+        with tarfile.open(sourcefile, "r:gz") as compressor:
+            compressor.extractall(dest_path)
+    elif sourcefile.endswith(".zip"):
+        with zipfile.ZipFile(sourcefile, 'r') as compressor:
+            compressor.extractall(dest_path)
+    else:
+        raise root_errors.UnsupportedCompressionFileType(
+            "Sorry, we could only support compression file type "
+            "for zip or tar.gz.")
 
 # pylint: disable=old-style-class,no-init
 class TextColors:
@@ -551,3 +590,128 @@ class BatchHttpRequestExecutor(object):
             exception is an instance of DriverError or None if no error.
         """
         return self._final_results
+
+
+class TimeExecute(object):
+    """Count the function execute time."""
+
+    def __init__(self, function_description=None, print_before_call=True, print_status=True):
+        """Initializes the class.
+
+        Args:
+            function_description: String that describes function (e.g."Creating
+                                  Instance...")
+            print_before_call: Boolean, print the function description before
+                               calling the function, default True.
+            print_status: Boolean, print the status of the function after the
+                          function has completed, default True ("OK" or "Fail").
+        """
+        self._function_description = function_description
+        self._print_before_call = print_before_call
+        self._print_status = print_status
+
+    def __call__(self, func):
+        def DecoratorFunction(*args, **kargs):
+            """Decorator function.
+
+            Args:
+                *args: Arguments to pass to the functor.
+                **kwargs: Key-val based arguments to pass to the functor.
+
+            Raises:
+                Exception: The exception that functor(*args, **kwargs) throws.
+            """
+            timestart = time.time()
+            if self._print_before_call:
+                PrintColorString("%s ..."% self._function_description, end="")
+            try:
+                result = func(*args, **kargs)
+                if not self._print_before_call:
+                    PrintColorString("%s (%ds)" % (self._function_description,
+                                                   time.time()-timestart),
+                                     TextColors.OKGREEN)
+                if self._print_status:
+                    PrintColorString("OK! (%ds)" % (time.time()-timestart),
+                                     TextColors.OKGREEN)
+                return result
+            except:
+                if self._print_status:
+                    PrintColorString("Fail! (%ds)" % (time.time()-timestart),
+                                     TextColors.FAIL)
+                raise
+        return DecoratorFunction
+
+
+def PickFreePort():
+    """Helper to pick a free port.
+
+    Returns:
+        Integer, a free port number.
+    """
+    tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_socket.bind(("", 0))
+    port = tcp_socket.getsockname()[1]
+    tcp_socket.close()
+    return port
+
+
+def _ExecuteCommand(cmd, args):
+    """Execute command.
+
+    Args:
+        cmd: Strings of execute binary name.
+        args: List of args to pass in with cmd.
+
+    Raises:
+        errors.NoExecuteBin: Can't find the execute bin file.
+    """
+    bin_path = find_executable(cmd)
+    if not bin_path:
+        raise root_errors.NoExecuteCmd("unable to locate %s" % cmd)
+    command = [bin_path] + args
+    logger.debug("Running '%s'", ' '.join(command))
+    with open(os.devnull, "w") as dev_null:
+        subprocess.check_call(command, stderr=dev_null, stdout=dev_null)
+
+
+# pylint: disable=too-many-locals
+def AutoConnect(ip_addr, rsa_key_file, target_vnc_port, target_adb_port, ssh_user):
+    """Autoconnect to an AVD instance.
+
+    Args:
+        ip_addr: String, use to build the adb & vnc tunnel between local
+                 and remote instance.
+        rsa_key_file: String, Private key file path to use when creating
+                      the ssh tunnels.
+        target_vnc_port: Integer of target vnc port number.
+        target_adb_port: Integer of target adb port number.
+        ssh_user: String of user login into the instance.
+
+    Returns:
+        NamedTuple of (vnc_port, adb_port) SSHTUNNEL of the connect, both are
+        integers.
+    """
+    local_free_vnc_port = PickFreePort()
+    local_free_adb_port = PickFreePort()
+    try:
+        ssh_tunnel_args = _SSH_TUNNEL_ARGS % {
+            "rsa_key_file": rsa_key_file,
+            "vnc_port": local_free_vnc_port,
+            "adb_port": local_free_adb_port,
+            "target_vnc_port": target_vnc_port,
+            "target_adb_port": target_adb_port,
+            "ssh_user": ssh_user,
+            "ip_addr": ip_addr}
+        _ExecuteCommand(SSH_BIN, ssh_tunnel_args.split())
+    except subprocess.CalledProcessError:
+        PrintColorString("Failed to create ssh tunnels, retry with '#acloud "
+                         "reconnect'.", TextColors.FAIL)
+    try:
+        adb_connect_args = _ADB_CONNECT_ARGS % {"adb_port": local_free_adb_port}
+        _ExecuteCommand(ADB_BIN, adb_connect_args.split())
+    except subprocess.CalledProcessError:
+        PrintColorString("Failed to adb connect, retry with "
+                         "'#acloud reconnect'", TextColors.FAIL)
+
+    return ForwardedPorts(vnc_port=local_free_vnc_port,
+                          adb_port=local_free_adb_port)
