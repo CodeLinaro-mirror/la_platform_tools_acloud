@@ -44,8 +44,8 @@ class CreateError(Exception):
     """Base Create cmd exception."""
 
 
-class GetEnvAndroidProductOutError(CreateError):
-    """Can't get client environment ANDROID_PRODUCT_OUT."""
+class GetAndroidBuildEnvVarError(CreateError):
+    """Can't get Android Build set environment variables."""
 
 
 class CheckPathError(CreateError):
@@ -82,3 +82,27 @@ class GetLocalImageError(CreateError):
 
 class GetCvdLocalHostPackageError(CreateError):
     """Can't find the lost host package."""
+
+
+class NoCuttlefishCommonInstalled(SetupError):
+    """Can't find cuttlefish_common lib."""
+
+
+class UnpackBootImageError(CreateError):
+    """Error related to unpack boot.img."""
+
+
+class BootImgDoesNotExist(CreateError):
+    """boot.img does not exist."""
+
+
+class UnsupportedCompressionFileType(SetupError):
+    """Don't support the compression file type."""
+
+
+class LaunchCVDFail(CreateError):
+    """Cuttlefish AVD launch failed."""
+
+
+class NoExecuteCmd(CreateError):
+    """Can't find execute bin command."""

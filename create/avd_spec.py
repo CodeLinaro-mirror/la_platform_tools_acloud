@@ -33,21 +33,32 @@ from acloud.internal.lib import auth
 from acloud.public import config
 
 # Default values for build target.
-_BRANCH_PREFIX = "aosp-"
 _BRANCH_RE = re.compile(r"^Manifest branch: (?P<branch>.+)")
 _BUILD_TARGET = "build_target"
 _BUILD_BRANCH = "build_branch"
 _BUILD_ID = "build_id"
-_COMMAND_REPO_IMFO = ["repo", "info"]
+_COMMAND_REPO_INFO = ["repo", "info"]
 _DEFAULT_BUILD_BITNESS = "x86"
 _DEFAULT_BUILD_TYPE = "userdebug"
 _ENV_ANDROID_PRODUCT_OUT = "ANDROID_PRODUCT_OUT"
-_TARGET_PREFIX = "aosp_"
+_ENV_ANDROID_BUILD_TOP = "ANDROID_BUILD_TOP"
 _RE_GBSIZE = re.compile(r"^(?P<gb_size>\d+)g$", re.IGNORECASE)
 _RE_INT = re.compile(r"^\d+$")
 _RE_RES = re.compile(r"^(?P<x_res>\d+)x(?P<y_res>\d+)$")
 _X_RES = "x_res"
 _Y_RES = "y_res"
+_COMMAND_GIT_REMOTE = ["git", "remote"]
+
+# The branch prefix is necessary for the Android Build system to know what we're
+# talking about. For instance, on an aosp remote repo in the master branch,
+# Android Build will recognize it as aosp-master.
+_BRANCH_PREFIX = {"aosp": "aosp-"}
+_DEFAULT_BRANCH_PREFIX = "git_"
+
+# The target prefix is needed to help concoct the lunch target name given a
+# the branch, avd type and device flavor:
+# aosp, cf and phone -> aosp_cf_x86_phone.
+_BRANCH_TARGET_PREFIX = {"aosp": "aosp_"}
 
 ALL_SCOPES = [android_build_client.AndroidBuildClient.SCOPE]
 
@@ -66,6 +77,7 @@ class AVDSpec(object):
         # Let's define the private class vars here and then process the user
         # args afterwards.
         self._autoconnect = None
+        self._report_internal_ip = None
         self._avd_type = None
         self._flavor = None
         self._image_source = None
@@ -203,6 +215,7 @@ class AVDSpec(object):
             args: Namespace object from argparse.parse_args.
         """
         self._autoconnect = args.autoconnect
+        self._report_internal_ip = args.report_internal_ip
         self._avd_type = args.avd_type
         self._flavor = args.flavor
         self._instance_type = (constants.INSTANCE_TYPE_LOCAL
@@ -228,11 +241,11 @@ class AVDSpec(object):
         else:
             try:
                 self._local_image_dir = os.environ[_ENV_ANDROID_PRODUCT_OUT]
-            except KeyError as e:
-                raise errors.GetEnvAndroidProductOutError(
-                    "Could not get environment: %s"
-                    "\nTry to run '#. build/envsetup.sh && lunch'" %
-                    str(e)
+            except KeyError:
+                raise errors.GetAndroidBuildEnvVarError(
+                    "Could not get environment var: %s\n"
+                    "Try to run '#source build/envsetup.sh && lunch <target>'"
+                    % _ENV_ANDROID_PRODUCT_OUT
                 )
 
     def _ProcessRemoteBuildArgs(self, args):
@@ -244,8 +257,6 @@ class AVDSpec(object):
         Args:
             args: Namespace object from argparse.parse_args.
         """
-        # TODO: We need some logic here to determine if we should infer remote
-        # build info or not.
         self._remote_image = {}
         self._remote_image[_BUILD_BRANCH] = args.branch
         if not self._remote_image[_BUILD_BRANCH]:
@@ -264,7 +275,29 @@ class AVDSpec(object):
                 self._remote_image[constants.BUILD_BRANCH])
 
     @staticmethod
-    def _GetBranchFromRepo():
+    def _GetGitRemote():
+        """Get the remote repo.
+
+        We'll go to a project we know exists (tools/acloud) and grab the git
+        remote output from there.
+
+        Returns:
+            remote: String, git remote (e.g. "aosp").
+        """
+        try:
+            android_build_top = os.environ[_ENV_ANDROID_BUILD_TOP]
+        except KeyError:
+            raise errors.GetAndroidBuildEnvVarError(
+                "Could not get environment var: %s\n"
+                "Try to run '#source build/envsetup.sh && lunch <target>'"
+                % _ENV_ANDROID_BUILD_TOP
+            )
+
+        acloud_project = os.path.join(android_build_top, "tools", "acloud")
+        return subprocess.check_output(_COMMAND_GIT_REMOTE,
+                                       cwd=acloud_project).strip()
+
+    def _GetBranchFromRepo(self):
         """Get branch information from command "repo info".
 
         Returns:
@@ -274,19 +307,18 @@ class AVDSpec(object):
             errors.GetBranchFromRepoInfoError: Can't get branch from
             output of "repo info".
         """
-        repo_output = subprocess.check_output(_COMMAND_REPO_IMFO)
+        repo_output = subprocess.check_output(_COMMAND_REPO_INFO)
         for line in repo_output.splitlines():
             match = _BRANCH_RE.match(line)
             if match:
-                # Android Build will expect the branch in the following format:
-                # aosp-master
-                return _BRANCH_PREFIX + match.group("branch")
+                branch_prefix = _BRANCH_PREFIX.get(self._GetGitRemote(),
+                                                   _DEFAULT_BRANCH_PREFIX)
+                return branch_prefix + match.group("branch")
         raise errors.GetBranchFromRepoInfoError(
             "No branch mentioned in repo info output: %s" % repo_output
         )
 
-    @staticmethod
-    def _GetBuildTarget(args):
+    def _GetBuildTarget(self, args):
         """Infer build target if user doesn't specified target name.
 
         Target = {REPO_PREFIX}{avd_type}_{bitness}_{flavor}-
@@ -299,8 +331,10 @@ class AVDSpec(object):
         Returns:
             build_target: String, name of build target.
         """
+        branch = re.split("-|_", self._remote_image[_BUILD_BRANCH])[0]
         return "%s%s_%s_%s-%s" % (
-            _TARGET_PREFIX, constants.AVD_TYPES_MAPPING[args.avd_type],
+            _BRANCH_TARGET_PREFIX.get(branch, ""),
+            constants.AVD_TYPES_MAPPING[args.avd_type],
             _DEFAULT_BUILD_BITNESS, args.flavor,
             _DEFAULT_BUILD_TYPE)
 
@@ -343,6 +377,11 @@ class AVDSpec(object):
     def num(self):
         """Return num of instances."""
         return self._num_of_instances
+
+    @property
+    def report_internal_ip(self):
+        """Return report internal ip."""
+        return self._report_internal_ip
 
     @property
     def kernel_build_id(self):
