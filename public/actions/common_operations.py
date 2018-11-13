@@ -20,15 +20,21 @@ and Cuttlefish (create_cuttlefish_action) devices. Should not be called
 directly.
 """
 
+from __future__ import print_function
+import getpass
 import logging
 
 from acloud.public import avd
 from acloud.public import errors
 from acloud.public import report
+from acloud.internal import constants
 from acloud.internal.lib import utils
 
 logger = logging.getLogger(__name__)
 
+#For the cuttlefish remote instances: adb port is 6520 and vnc is 6444.
+_CF_TARGET_ADB_PORT = 6520
+_CF_TARGET_VNC_PORT = 6444
 
 def CreateSshKeyPairIfNecessary(cfg):
     """Create ssh key pair if necessary.
@@ -89,7 +95,6 @@ class DevicePool(object):
         Args:
             num: Number of devices to create.
         """
-
         # Create host instances for cuttlefish/goldfish device.
         # Currently one instance supports only 1 device.
         for _ in range(num):
@@ -98,6 +103,7 @@ class DevicePool(object):
             self.devices.append(
                 avd.AndroidVirtualDevice(ip=ip, instance_name=instance))
 
+    @utils.TimeExecute(function_description="Waiting for AVD(s) to boot up")
     def WaitForBoot(self):
         """Waits for all devices to boot up.
 
@@ -124,14 +130,25 @@ class DevicePool(object):
         return self._devices
 
 
-def CreateDevices(command, cfg, device_factory, num):
+# pylint: disable=too-many-locals
+def CreateDevices(command, cfg, device_factory, num, report_internal_ip=False,
+                  autoconnect=False):
     """Create a set of devices using the given factory.
+
+    Main jobs in create devices.
+        1. Create GCE instance: Launch instance in GCP(Google Cloud Platform).
+        2. Starting up AVD: Wait device boot up.
 
     Args:
         command: The name of the command, used for reporting.
         cfg: An AcloudConfig instance.
         device_factory: A factory capable of producing a single device.
         num: The number of devices to create.
+        report_internal_ip: Boolean to report the internal ip instead of
+                            external ip.
+
+    Raises:
+        errors: Create instance fail.
 
     Returns:
         A Report instance.
@@ -142,21 +159,31 @@ def CreateDevices(command, cfg, device_factory, num):
         device_pool = DevicePool(device_factory)
         device_pool.CreateDevices(num)
         failures = device_pool.WaitForBoot()
+        if failures:
+            reporter.SetStatus(report.Status.BOOT_FAIL)
+        else:
+            reporter.SetStatus(report.Status.SUCCESS)
         # Write result to report.
         for device in device_pool.devices:
+            ip = (device.ip.internal if report_internal_ip
+                  else device.ip.external)
             device_dict = {
-                "ip": device.ip,
+                "ip": ip,
                 "instance_name": device.instance_name
             }
+            if autoconnect:
+                forwarded_ports = utils.AutoConnect(ip,
+                                                    cfg.ssh_private_key_path,
+                                                    _CF_TARGET_VNC_PORT,
+                                                    _CF_TARGET_ADB_PORT,
+                                                    getpass.getuser())
+                device_dict[constants.VNC_PORT] = forwarded_ports.vnc_port
+                device_dict[constants.ADB_PORT] = forwarded_ports.adb_port
             if device.instance_name in failures:
                 reporter.AddData(key="devices_failing_boot", value=device_dict)
                 reporter.AddError(str(failures[device.instance_name]))
             else:
                 reporter.AddData(key="devices", value=device_dict)
-        if failures:
-            reporter.SetStatus(report.Status.BOOT_FAIL)
-        else:
-            reporter.SetStatus(report.Status.SUCCESS)
     except errors.DriverError as e:
         reporter.AddError(str(e))
         reporter.SetStatus(report.Status.FAIL)

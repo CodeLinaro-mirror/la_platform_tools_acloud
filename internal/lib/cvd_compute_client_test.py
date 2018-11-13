@@ -19,6 +19,8 @@
 import unittest
 import mock
 
+from acloud.create import avd_spec
+from acloud.internal import constants
 from acloud.internal.lib import cvd_compute_client
 from acloud.internal.lib import driver_test_lib
 from acloud.internal.lib import gcompute_client
@@ -77,8 +79,9 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
     @mock.patch.object(gcompute_client.ComputeClient, "CreateInstance")
     @mock.patch.object(cvd_compute_client.CvdComputeClient, "_GetDiskArgs",
                        return_value=[{"fake_arg": "fake_value"}])
-    def testCreateInstance(self, _get_disk_args, mock_create, _get_image,
-                           _compare_machine_size):
+    @mock.patch("getpass.getuser", return_value="fake_user")
+    def testCreateInstance(self, _get_user, _get_disk_args, mock_create,
+                           _get_image, _compare_machine_size):
         """Test CreateInstance."""
         expected_metadata = {
             "cvd_01_dpi": str(self.DPI),
@@ -90,6 +93,7 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
             "cvd_01_launch": "1",
             "cvd_01_x_res": str(self.X_RES),
             "cvd_01_y_res": str(self.Y_RES),
+            "user": "fake_user",
             "cvd_01_data_policy":
                 self.cvd_compute_client.DATA_POLICY_CREATE_IF_MISSING,
             "cvd_01_blank_data_disk_size": str(self.EXTRA_DATA_DISK_SIZE_GB * 1024),
@@ -113,6 +117,35 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
             network=self.NETWORK,
             zone=self.ZONE)
 
+        #test use local image in the remote instance.
+        args = mock.MagicMock()
+        args.local_image = "/tmp/path"
+        args.config_file = ""
+        args.avd_type = "cf"
+        args.flavor = "phone"
+        fake_avd_spec = avd_spec.AVDSpec(args)
+        fake_avd_spec.hw_property[constants.HW_X_RES] = str(self.X_RES)
+        fake_avd_spec.hw_property[constants.HW_Y_RES] = str(self.Y_RES)
+        fake_avd_spec.hw_property[constants.HW_ALIAS_DPI] = str(self.DPI)
+        fake_avd_spec.hw_property[constants.HW_ALIAS_DISK] = str(
+            self.EXTRA_DATA_DISK_SIZE_GB * 1024)
+        expected_metadata["cvd_01_launch"] = "0"
+        expected_metadata["avd_type"] = "cf"
+        expected_metadata["flavor"] = "phone"
+        self.cvd_compute_client.CreateInstance(
+            self.INSTANCE, self.IMAGE, self.IMAGE_PROJECT, self.TARGET, self.BRANCH,
+            self.BUILD_ID, self.KERNEL_BRANCH, self.KERNEL_BUILD_ID,
+            self.EXTRA_DATA_DISK_SIZE_GB, fake_avd_spec)
 
+        mock_create.assert_called_with(
+            self.cvd_compute_client,
+            instance=self.INSTANCE,
+            image_name=self.IMAGE,
+            image_project=self.IMAGE_PROJECT,
+            disk_args=expected_disk_args,
+            metadata=expected_metadata,
+            machine_type=self.MACHINE_TYPE,
+            network=self.NETWORK,
+            zone=self.ZONE)
 if __name__ == "__main__":
     unittest.main()

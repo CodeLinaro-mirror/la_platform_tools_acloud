@@ -20,8 +20,44 @@ an Android Virtual Device and the logic related to prepping the local/remote
 image artifacts.
 """
 
+from acloud import errors
 from acloud.create import avd_spec
-from acloud.create import base_avd_create
+from acloud.create import local_image_local_instance
+from acloud.create import local_image_remote_instance
+from acloud.create import remote_image_remote_instance
+from acloud.create import remote_image_local_instance
+from acloud.internal import constants
+
+
+def GetAvdCreatorClass(instance_type, image_source):
+    """Return the creator class for the specified spec.
+
+    Based on the image source and the instance type, return the proper
+    creator class.
+
+    Args:
+        instance_type: String, the AVD instance type (local or remote).
+        image_source: String, the source of the image (local or remote).
+
+    Returns:
+        An AVD creator class (e.g. LocalImageRemoteInstance).
+    """
+    if (instance_type == constants.INSTANCE_TYPE_REMOTE and
+            image_source == constants.IMAGE_SRC_LOCAL):
+        return local_image_remote_instance.LocalImageRemoteInstance
+    if (instance_type == constants.INSTANCE_TYPE_LOCAL and
+            image_source == constants.IMAGE_SRC_LOCAL):
+        return local_image_local_instance.LocalImageLocalInstance
+    if (instance_type == constants.INSTANCE_TYPE_REMOTE and
+            image_source == constants.IMAGE_SRC_REMOTE):
+        return remote_image_remote_instance.RemoteImageRemoteInstance
+    if (instance_type == constants.INSTANCE_TYPE_LOCAL and
+            image_source == constants.IMAGE_SRC_REMOTE):
+        return remote_image_local_instance.RemoteImageLocalInstance
+
+    raise errors.UnsupportedInstanceImageType(
+        "unsupported creation of instance type: %s, image source: %s" %
+        (instance_type, image_source))
 
 
 def Run(args):
@@ -31,5 +67,9 @@ def Run(args):
         args: Namespace object from argparse.parse_args.
     """
     spec = avd_spec.AVDSpec(args)
-    avd_creator = base_avd_create.BaseAVDCreate()
-    avd_creator.Create(spec)
+    avd_creator_class = GetAvdCreatorClass(spec.instance_type,
+                                           spec.image_source)
+    avd_creator = avd_creator_class()
+    report = avd_creator.Create(spec)
+    if report and args.report_file:
+        report.Dump(args.report_file)

@@ -1,0 +1,52 @@
+#!/usr/bin/env python
+#
+# Copyright 2018 - The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+r"""RemoteImageRemoteInstance class.
+
+Create class that is responsible for creating a remote instance AVD with a
+remote image.
+"""
+
+import time
+
+from acloud.create import base_avd_create
+from acloud.create import create_common
+from acloud.internal import constants
+from acloud.internal.lib import utils
+from acloud.public.actions import create_cuttlefish_action
+
+
+class RemoteImageRemoteInstance(base_avd_create.BaseAVDCreate):
+    """Create class for a remote image remote instance AVD."""
+
+    @utils.TimeExecute(function_description="Total time: ",
+                       print_before_call=False, print_status=False)
+    def Create(self, avd_spec):
+        """Create the AVD.
+
+        Args:
+            avd_spec: AVDSpec object that tells us what we're going to create.
+
+        Returns:
+            A Report instance.
+        """
+        self.PrintAvdDetails(avd_spec)
+        report = create_cuttlefish_action.CreateDevices(avd_spec=avd_spec)
+        create_common.DisplayJobResult(report)
+        # Launch vnc client if we're auto-connecting.
+        if avd_spec.autoconnect:
+            for device in report.data.get("devices", []):
+                self.LaunchVncClient(device.get(constants.VNC_PORT))
+        return report

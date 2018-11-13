@@ -20,27 +20,44 @@ or remote instance of an Android Virtual Device.
 """
 
 from __future__ import print_function
+import os
+import subprocess
 
 from acloud.internal.lib import utils
 from acloud.setup import host_setup_runner
+from acloud.setup import gcp_setup_runner
 
 
-def Run():
+def Run(args):
     """Run setup.
+
+    Setup options:
+        -host: Setup host settings.
+        -gcp_init: Setup gcp settings.
+        -None, default behavior will setup host and gcp settings.
 
     Args:
         args: Namespace object from argparse.parse_args.
     """
+    _RunPreSetup()
+
     # Setup process will be in the following manner:
     # 1.Print welcome message.
     _PrintWelcomeMessage()
 
     # 2.Init all subtasks in queue and traverse them.
-    task_queue = [host_setup_runner.CuttlefishPkgInstaller(),
-                  host_setup_runner.CuttlefishHostSetup(),]
+    host_runner = host_setup_runner.AvdPkgInstaller()
+    host_env_runner = host_setup_runner.CuttlefishHostSetup()
+    gcp_runner = gcp_setup_runner.GcpTaskRunner(args.config_file)
+    task_queue = []
+    if args.host or not args.gcp_init:
+        task_queue.append(host_runner)
+        task_queue.append(host_env_runner)
+    if args.gcp_init or not args.host:
+        task_queue.append(gcp_runner)
 
     for subtask in task_queue:
-        subtask.Run()
+        subtask.Run(force_setup=args.force)
 
     # 3.Print the usage hints.
     _PrintUsage()
@@ -63,4 +80,22 @@ def _PrintWelcomeMessage():
 
 def _PrintUsage():
     """Print cmd usage hints when acloud setup been finished."""
-    utils.PrintColorString("\nIf you'd like more info, run '#acloud create --help'")
+    utils.PrintColorString("")
+    utils.PrintColorString("Setup process finished")
+    utils.PrintColorString("To get started creating AVDs, run '#acloud create'")
+
+
+def _RunPreSetup():
+    """This will run any pre-setup scripts.
+
+    If we can find any pre-setup scripts, run it and don't care about the
+    results. Pre-setup scripts will do any special setup before actual
+    setup occurs (e.g. copying configs).
+    """
+    build_top = os.environ.get("ANDROID_BUILD_TOP")
+    if build_top is None:
+        return
+    pre_setup_sh = os.path.join(build_top, "tools", "acloud", "setup",
+                                "pre_setup_sh", "acloud_pre_setup.sh")
+    if os.path.exists(pre_setup_sh):
+        subprocess.call([pre_setup_sh])
