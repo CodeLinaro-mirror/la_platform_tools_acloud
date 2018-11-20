@@ -17,17 +17,36 @@
 
 import errno
 import getpass
+import grp
 import os
 import shutil
 import subprocess
 import tempfile
 import time
+import Tkinter
 
 import unittest
 import mock
 
 from acloud.internal.lib import driver_test_lib
 from acloud.internal.lib import utils
+
+class FakeTkinter(object):
+    """Fake implementation of Tkinter.Tk()"""
+
+    def __init__(self, width=None, height=None):
+        self.width = width
+        self.height = height
+
+    # pylint: disable=invalid-name
+    def winfo_screenheight(self):
+        """Return the screen height."""
+        return self.height
+
+    # pylint: disable=invalid-name
+    def winfo_screenwidth(self):
+        """Return the screen width."""
+        return self.width
 
 
 class UtilsTest(driver_test_lib.BaseDriverTest):
@@ -243,6 +262,74 @@ class UtilsTest(driver_test_lib.BaseDriverTest):
         self.assertEqual(utils.GetAnswerFromList(answer_list,
                                                  enable_choose_all=True),
                          answer_list)
+
+    @mock.patch.object(Tkinter, "Tk")
+    def testCalculateVNCScreenRatio(self, mock_tk):
+        """Test Calculating the scale ratio of VNC display."""
+        # Get scale-down ratio if screen height is smaller than AVD height.
+        mock_tk.return_value = FakeTkinter(height=800, width=1200)
+        avd_h = 1920
+        avd_w = 1080
+        self.assertEqual(utils.CalculateVNCScreenRatio(avd_w, avd_h), 0.4)
+
+        # Get scale-down ratio if screen width is smaller than AVD width.
+        mock_tk.return_value = FakeTkinter(height=800, width=1200)
+        avd_h = 900
+        avd_w = 1920
+        self.assertEqual(utils.CalculateVNCScreenRatio(avd_w, avd_h), 0.6)
+
+        # Scale ratio = 1 if screen is larger than AVD.
+        mock_tk.return_value = FakeTkinter(height=1080, width=1920)
+        avd_h = 800
+        avd_w = 1280
+        self.assertEqual(utils.CalculateVNCScreenRatio(avd_w, avd_h), 1)
+
+        # Get the scale if ratio of width is smaller than the
+        # ratio of height.
+        mock_tk.return_value = FakeTkinter(height=1200, width=800)
+        avd_h = 1920
+        avd_w = 1080
+        self.assertEqual(utils.CalculateVNCScreenRatio(avd_w, avd_h), 0.6)
+
+    # pylint: disable=protected-access
+    def testCheckUserInGroups(self):
+        """Test CheckUserInGroups."""
+        self.Patch(os, "getgroups", return_value=[1, 2, 3])
+        gr1 = mock.MagicMock()
+        gr1.gr_name = "fake_gr_1"
+        gr2 = mock.MagicMock()
+        gr2.gr_name = "fake_gr_2"
+        gr3 = mock.MagicMock()
+        gr3.gr_name = "fake_gr_3"
+        self.Patch(grp, "getgrgid", side_effect=[gr1, gr2, gr3])
+
+        # User in all required groups should return true.
+        self.assertTrue(
+            utils.CheckUserInGroups(
+                ["fake_gr_1", "fake_gr_2"]))
+
+        # User not in all required groups should return False.
+        self.Patch(grp, "getgrgid", side_effect=[gr1, gr2, gr3])
+        self.assertFalse(
+            utils.CheckUserInGroups(
+                ["fake_gr_1", "fake_gr_4"]))
+
+    @mock.patch.object(utils, "CheckUserInGroups")
+    def testAddUserGroupsToCmd(self, mock_user_group):
+        """Test AddUserGroupsToCmd."""
+        command = "test_command"
+        groups = ["group1", "group2"]
+        # Don't add user group in command
+        mock_user_group.return_value = True
+        expected_value = "test_command"
+        self.assertEqual(expected_value, utils.AddUserGroupsToCmd(command,
+                                                                  groups))
+
+        # Add user group in command
+        mock_user_group.return_value = False
+        expected_value = "sg group1 <<EOF\nsg group2\ntest_command\nEOF"
+        self.assertEqual(expected_value, utils.AddUserGroupsToCmd(command,
+                                                                  groups))
 
 
 if __name__ == "__main__":

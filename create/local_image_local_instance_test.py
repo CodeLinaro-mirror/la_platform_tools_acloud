@@ -20,7 +20,7 @@ import mock
 
 from acloud.create import local_image_local_instance
 from acloud.internal import constants
-from acloud.setup import host_setup_runner
+from acloud.internal.lib import utils
 
 
 class LocalImageLocalInstanceTest(unittest.TestCase):
@@ -28,7 +28,7 @@ class LocalImageLocalInstanceTest(unittest.TestCase):
 
     LAUNCH_CVD_CMD = """sg group1 <<EOF
 sg group2
-launch_cvd --daemon --cpus fake --x_res fake --y_res fake --dpi fake --memory_mb fake --blank_data_image_mb fake --data_policy always_create --system_image_dir fake_image_dir --vnc_server_port 6444 --serial_number acloudCFflavor
+launch_cvd --daemon --cpus fake --x_res fake --y_res fake --dpi fake --memory_mb fake --blank_data_image_mb fake --data_policy always_create --system_image_dir fake_image_dir --vnc_server_port 6444
 EOF"""
 
     def setUp(self):
@@ -36,7 +36,7 @@ EOF"""
         self.local_image_local_instance = local_image_local_instance.LocalImageLocalInstance()
 
     # pylint: disable=protected-access
-    @mock.patch.object(host_setup_runner.CuttlefishHostSetup, "CheckUserInGroups")
+    @mock.patch.object(utils, "CheckUserInGroups")
     def testPrepareLaunchCVDCmd(self, mock_usergroups):
         """test PrepareLaunchCVDCmd."""
         mock_usergroups.return_value = False
@@ -45,7 +45,7 @@ EOF"""
         constants.LIST_CF_USER_GROUPS = ["group1", "group2"]
 
         launch_cmd = self.local_image_local_instance.PrepareLaunchCVDCmd(
-            constants.CMD_LAUNCH_CVD, hw_property, "fake_image_dir", "flavor")
+            constants.CMD_LAUNCH_CVD, hw_property, "fake_image_dir")
 
         self.assertEqual(launch_cmd, self.LAUNCH_CVD_CMD)
 
