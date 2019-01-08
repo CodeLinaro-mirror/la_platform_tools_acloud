@@ -13,55 +13,35 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-r"""Cloud Android Driver.
+r"""
+Welcome to
+   ___  _______   ____  __  _____
+  / _ |/ ___/ /  / __ \/ / / / _ \
+ / __ / /__/ /__/ /_/ / /_/ / // /
+/_/ |_\___/____/\____/\____/____/
 
-This CLI manages google compute engine project for android devices.
+
+This a tool to create Android Virtual Devices locally/remotely.
 
 - Prerequisites:
-  See: go/acloud-manual
+ The manual will be available at
+ https://android.googlesource.com/platform/tools/acloud/+/master/README.md
 
-- Configuration:
-  The script takes a required configuration file, which should look like
-     <Start of the file>
-     # If using service account
-     service_account_name: "your_account@developer.gserviceaccount.com"
-     service_account_private_key_path: "/path/to/your-project.p12"
-     # Or
-     service_account_json_private_key_path: "/path/to/your-project.json"
+- To get started:
+ - Create instances:
+    1) To create a remote cuttlefish instance with the local built image.
+       Example:
+       $ acloud create --local_image /tmp/image_dir
+    2) To create a local cuttlefish instance using the image which has been
+       built out in your workspace.
+       Example:
+       $ acloud create --local-instance --local-image
 
-     # If using OAuth2 authentication flow
-     client_id: <client id created in the project>
-     client_secret: <client secret for the client id>
+ - Delete instances:
+   $ acloud delete
 
-     # Optional
-     ssh_private_key_path: "~/.ssh/acloud_rsa"
-     ssh_public_key_path: "~/.ssh/acloud_rsa.pub"
-     orientation: "portrait"
-     resolution: "800x1280x32x213"
-     network: "default"
-     machine_type: "n1-standard-1"
-     extra_data_disk_size_gb: 10  # 4G or 10G
+Try $acloud [cmd] --help for further details.
 
-     # Required
-     project: "your-project"
-     zone: "us-central1-f"
-     storage_bucket_name: "your_google_storage_bucket_name"
-     <End of the file>
-
-  Save it at /path/to/acloud.config
-
-- Example calls:
-  - Create two instances:
-  $ acloud.par create_cf
-    --build_target aosp_cf_x86_phone-userdebug \
-    --build_id 3744001 --num 2 --config_file /path/to/acloud.config \
-    --report_file /tmp/acloud_report.json --log_file /tmp/acloud.log
-
-  - Delete two instances:
-  $ acloud.par delete --instance_names
-    ins-b638cdba-3744001-gce-x86-phone-userdebug-fastbuild3c-linux
-    --config_file /path/to/acloud.config
-    --report_file /tmp/acloud_report.json --log_file /tmp/acloud.log
 """
 import argparse
 import getpass
@@ -77,17 +57,18 @@ OAUTH2_LOGGER.setLevel(logging.CRITICAL)
 OAUTH2_LOGGER.addHandler(logging.FileHandler("/dev/null"))
 
 # pylint: disable=wrong-import-position
+from acloud.create import create
+from acloud.create import create_args
+from acloud.delete import delete
+from acloud.delete import delete_args
 from acloud.internal import constants
+from acloud.metrics import metrics
 from acloud.public import acloud_common
 from acloud.public import config
 from acloud.public import device_driver
 from acloud.public import errors
 from acloud.public.actions import create_cuttlefish_action
 from acloud.public.actions import create_goldfish_action
-from acloud.create import create
-from acloud.create import create_args
-from acloud.delete import delete
-from acloud.delete import delete_args
 from acloud.setup import setup
 from acloud.setup import setup_args
 
@@ -119,12 +100,10 @@ def _ParseArgs(args):
         CMD_CREATE_GOLDFISH,
         delete_args.CMD_DELETE,
     ])
-    usage_msg = ("acloud { %s } ..."
-                 "\nTry 'acloud --help' for more information.") % usage
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        usage=usage_msg)
+        usage="acloud {" + usage + "} ...")
     subparsers = parser.add_subparsers()
     subparser_list = []
 
@@ -259,30 +238,6 @@ def _ParseArgs(args):
     return parser.parse_args(args)
 
 
-# TODO(b/112803893): Delete this method once the new create method has been completed.
-def _TranslateAlias(parsed_args):
-    """Translate alias to Launch Control compatible values.
-
-    This method translates alias to Launch Control compatible values.
-     - branch: "git_" prefix will be added if branch name doesn't have it.
-     - build_target: For example, "phone" will be translated to full target
-                          name "git_x86_phone-userdebug",
-
-    Args:
-        parsed_args: Parsed args.
-
-    Returns:
-        Parsed args with its values being translated.
-    """
-    if parsed_args.which == create_args.CMD_CREATE:
-        if (parsed_args.branch and
-                not parsed_args.branch.startswith(constants.BRANCH_PREFIX)):
-            parsed_args.branch = constants.BRANCH_PREFIX + parsed_args.branch
-        parsed_args.build_target = constants.BUILD_TARGET_MAPPING.get(
-            parsed_args.build_target, parsed_args.build_target)
-    return parsed_args
-
-
 # pylint: disable=too-many-branches
 def _VerifyArgs(parsed_args):
     """Verify args.
@@ -403,8 +358,6 @@ def main(argv):
     """
     args = _ParseArgs(argv)
     _SetupLogging(args.log_file, args.verbose)
-    # Translation of the branch will happen in AvdSpec(), skip it for now.
-    #args = _TranslateAlias(args)
     _VerifyArgs(args)
 
     cfg = config.GetAcloudConfig(args)
@@ -412,6 +365,7 @@ def main(argv):
     # Check access.
     # device_driver.CheckAccess(cfg)
 
+    metrics.LogUsage()
     report = None
     if (args.which == create_args.CMD_CREATE
             and args.avd_type == constants.TYPE_GCE):
@@ -465,7 +419,7 @@ def main(argv):
         sys.stderr.write("Invalid command %s" % args.which)
         return 2
 
-    if report:
+    if report and args.report_file:
         report.Dump(args.report_file)
         if report.errors:
             msg = "\n".join(report.errors)

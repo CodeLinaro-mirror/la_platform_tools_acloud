@@ -37,7 +37,6 @@ from acloud.public.actions import common_operations
 
 logger = logging.getLogger(__name__)
 
-_ALL_SCOPES = [cvd_compute_client.CvdComputeClient.SCOPE]
 _CVD_HOST_PACKAGE = "cvd-host_package.tar.gz"
 _CVD_USER = getpass.getuser()
 _CMD_LAUNCH_CVD_ARGS = (" -cpus %s -x_res %s -y_res %s -dpi %s "
@@ -50,6 +49,9 @@ SSH_BIN = "ssh"
 _SSH_CMD = (" -i %(rsa_key_file)s "
             "-q -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "
             "-l %(login_user)s %(ip_addr)s ")
+_SSH_CMD_MAX_RETRY = 2
+_SSH_CMD_RETRY_SLEEP = 3
+_USER_BUILD = "userbuild"
 
 class RemoteInstanceDeviceFactory(base_device_factory.BaseDeviceFactory):
     """A class that can produce a cuttlefish device.
@@ -69,7 +71,7 @@ class RemoteInstanceDeviceFactory(base_device_factory.BaseDeviceFactory):
         self._local_image_artifact = local_image_artifact
         self._cvd_host_package_artifact = cvd_host_package_artifact
         self._report_internal_ip = avd_spec.report_internal_ip
-        self.credentials = auth.CreateCredentials(avd_spec.cfg, _ALL_SCOPES)
+        self.credentials = auth.CreateCredentials(avd_spec.cfg)
         compute_client = cvd_compute_client.CvdComputeClient(
             avd_spec.cfg, self.credentials)
         super(RemoteInstanceDeviceFactory, self).__init__(compute_client)
@@ -95,17 +97,50 @@ class RemoteInstanceDeviceFactory(base_device_factory.BaseDeviceFactory):
         self._LaunchCvd(_CVD_USER, self._avd_spec.hw_property)
         return instance
 
+    @staticmethod
+    def _ShellCmdWithRetry(remote_cmd):
+        """Runs a shell command on remote device.
+
+        If the network is unstable and causes SSH connect fail, it will retry.
+        When it retry in a short time, you may encounter unstable network. We
+        will use the mechanism of RETRY_BACKOFF_FACTOR. The retry time for each
+        failure is times * retries.
+
+        Args:
+            remote_cmd: A string, shell command to be run on remote.
+
+        Raises:
+            subprocess.CalledProcessError: For any non-zero return code of
+                                           remote_cmd.
+
+        Returns:
+            Boolean, True if the command was successfully executed. False otherwise.
+        """
+        return utils.RetryExceptionType(
+            exception_types=subprocess.CalledProcessError,
+            max_retries=_SSH_CMD_MAX_RETRY,
+            functor=lambda cmd: subprocess.check_call(cmd, shell=True),
+            sleep_multiplier=_SSH_CMD_RETRY_SLEEP,
+            retry_backoff_factor=utils.DEFAULT_RETRY_BACKOFF_FACTOR,
+            cmd=remote_cmd)
+
     def _CreateGceInstance(self):
         """Create a single configured cuttlefish device.
 
         Override method from parent class.
+        build_target: The format is like "aosp_cf_x86_phone". We only get info
+                      from the user build image file name. If the file name is
+                      not custom format (no "-"), We will use the original
+                      flavor as our build_target.
 
         Returns:
             A string, representing instance name.
         """
-        #TODO(117487673): Grab the build target name from the image name.
+        image_name = os.path.basename(self._local_image_artifact)
+        build_target = self._avd_spec.flavor if "-" not in image_name else image_name.split(
+            "-")[0]
         instance = self._compute_client.GenerateInstanceName(
-            build_target=self._avd_spec.flavor, build_id="local")
+            build_target=build_target, build_id=_USER_BUILD)
         # Create an instance from Stable Host Image
         self._compute_client.CreateInstance(
             instance=instance,
@@ -123,32 +158,43 @@ class RemoteInstanceDeviceFactory(base_device_factory.BaseDeviceFactory):
 
     @utils.TimeExecute(function_description="Setup GCE environment")
     def _SetAVDenv(self, cvd_user):
-        """set the user to run AVD in the instance."""
+        """set the user to run AVD in the instance.
+
+        Args:
+            cvd_user: A string, user run the cvd in the instance.
+        """
         avd_list_of_groups = []
         avd_list_of_groups.extend(constants.LIST_CF_USER_GROUPS)
         avd_list_of_groups.append(_OUTPUT_CONSOLE_GROUPS)
+        remote_cmd = ""
         for group in avd_list_of_groups:
-            remote_cmd = "\"sudo usermod -aG %s %s\"" %(group, cvd_user)
-            logger.debug("remote_cmd:\n %s", remote_cmd)
-            subprocess.check_call(self._ssh_cmd + remote_cmd, shell=True)
+            remote_cmd += "\"sudo usermod -aG %s %s;\"" %(group, cvd_user)
+        logger.debug("remote_cmd:\n %s", remote_cmd)
+        self._ShellCmdWithRetry(self._ssh_cmd + remote_cmd)
 
     @utils.TimeExecute(function_description="Uploading local image")
     def _UploadArtifacts(self,
                          cvd_user,
                          local_image_artifact,
                          cvd_host_package_artifact):
-        """Upload local image and avd local host package to instance."""
+        """Upload local image and avd local host package to instance.
+
+        Args:
+            cvd_user: A string, user upload the artifacts to instance.
+            local_image_artifact: A string, path to local image.
+            cvd_host_package_artifact: A string, path to cvd host package.
+        """
         # local image
         remote_cmd = ("\"sudo su -c '/usr/bin/install_zip.sh .' - '%s'\" < %s" %
                       (cvd_user, local_image_artifact))
         logger.debug("remote_cmd:\n %s", remote_cmd)
-        subprocess.check_call(self._ssh_cmd + remote_cmd, shell=True)
+        self._ShellCmdWithRetry(self._ssh_cmd + remote_cmd)
 
         # host_package
         remote_cmd = ("\"sudo su -c 'tar -x -z -f -' - '%s'\" < %s" %
                       (cvd_user, cvd_host_package_artifact))
         logger.debug("remote_cmd:\n %s", remote_cmd)
-        subprocess.check_call(self._ssh_cmd + remote_cmd, shell=True)
+        self._ShellCmdWithRetry(self._ssh_cmd + remote_cmd)
 
     def _LaunchCvd(self, cvd_user, hw_property):
         """Launch CVD."""
@@ -179,7 +225,11 @@ class LocalImageRemoteInstance(base_avd_create.BaseAVDCreate):
         self.cvd_host_package_artifact = None
 
     def VerifyArtifactsExist(self, local_image_dir):
-        """Verify required cuttlefish image artifacts exists."""
+        """Verify required cuttlefish image artifacts exists.
+
+        Arsg:
+            local_image_dir: A string, path to check the artifacts.
+        """
         self.local_image_artifact = create_common.VerifyLocalImageArtifactsExist(
             local_image_dir)
         self.cvd_host_package_artifact = self.VerifyHostPackageArtifactsExist(
@@ -228,13 +278,12 @@ class LocalImageRemoteInstance(base_avd_create.BaseAVDCreate):
 
     @utils.TimeExecute(function_description="Total time: ",
                        print_before_call=False, print_status=False)
-    def Create(self, avd_spec):
+    def _CreateAVD(self, avd_spec):
         """Create the AVD.
 
         Args:
             avd_spec: AVDSpec object that tells us what we're going to create.
         """
-        self.PrintAvdDetails(avd_spec)
         self.VerifyArtifactsExist(avd_spec.local_image_dir)
         device_factory = RemoteInstanceDeviceFactory(
             avd_spec,
@@ -242,10 +291,9 @@ class LocalImageRemoteInstance(base_avd_create.BaseAVDCreate):
             self.cvd_host_package_artifact)
         report = common_operations.CreateDevices(
             "create_cf", avd_spec.cfg, device_factory, avd_spec.num,
-            avd_spec.report_internal_ip, autoconnect=avd_spec.autoconnect)
-        create_common.DisplayJobResult(report)
+            report_internal_ip=avd_spec.report_internal_ip,
+            autoconnect=avd_spec.autoconnect)
         # Launch vnc client if we're auto-connecting.
         if avd_spec.autoconnect:
-            for device in report.data.get("devices", []):
-                self.LaunchVncClient(device.get(constants.VNC_PORT))
+            utils.LaunchVNCFromReport(report, avd_spec)
         return report

@@ -23,6 +23,7 @@ import binascii
 import collections
 import errno
 import getpass
+import grp
 import logging
 import os
 import shutil
@@ -33,6 +34,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import Tkinter
 import uuid
 import zipfile
 
@@ -56,6 +58,19 @@ _ADB_CONNECT_ARGS = "connect 127.0.0.1:%(adb_port)d"
 # Store the ports that vnc/adb are forwarded to, both are integers.
 ForwardedPorts = collections.namedtuple("ForwardedPorts", [constants.VNC_PORT,
                                                            constants.ADB_PORT])
+_VNC_BIN = "ssvnc"
+_CMD_PGREP = "pgrep"
+_CMD_SG = "sg "
+_CMD_START_VNC = "%(bin)s vnc://127.0.01:%(port)d"
+_CMD_INSTALL_SSVNC = "sudo apt-get --assume-yes install ssvnc"
+_ENV_DISPLAY = "DISPLAY"
+_SSVNC_ENV_VARS = {"SSVNC_NO_ENC_WARN": "1", "SSVNC_SCALE": "auto"}
+
+_CONFIRM_CONTINUE = ("In order to display the screen to the AVD, we'll need to "
+                     "install a vnc client (ssnvc). \nWould you like acloud to "
+                     "install it for you? (%s) \nPress 'y' to continue or "
+                     "anything else to abort it:[y] ") % _CMD_INSTALL_SSVNC
+
 
 class TempDir(object):
     """A context manager that ceates a temporary directory.
@@ -751,3 +766,198 @@ def GetAnswerFromList(answer_list, enable_choose_all=False):
             print("please choose between 0 and %d" % max_choice)
         else:
             return [answer_list[choice-start_index]]
+
+
+def LaunchVNCFromReport(report, avd_spec):
+    """Launch vnc client according to the instances report.
+
+    Args:
+        report: Report object, that stores and generates report.
+        avd_spec: AVDSpec object that tells us what we're going to create.
+    """
+    for device in report.data.get("devices", []):
+        _LaunchVncClient(device.get(constants.VNC_PORT),
+                         avd_width=avd_spec.hw_property["x_res"],
+                         avd_height=avd_spec.hw_property["y_res"])
+
+
+def _LaunchVncClient(port=constants.DEFAULT_VNC_PORT, avd_width=None,
+                     avd_height=None):
+    """Launch ssvnc.
+
+    Args:
+        port: Integer, port number.
+        avd_width: String, the width of avd.
+        avd_height: String, the height of avd.
+    """
+    try:
+        os.environ[_ENV_DISPLAY]
+    except KeyError:
+        PrintColorString("Remote terminal can't support VNC. "
+                         "Skipping VNC startup.", TextColors.FAIL)
+        return
+
+    if not find_executable(_VNC_BIN):
+        if GetUserAnswerYes(_CONFIRM_CONTINUE):
+            try:
+                PrintColorString("Installing ssvnc vnc client... ", end="")
+                sys.stdout.flush()
+                subprocess.check_output(_CMD_INSTALL_SSVNC, shell=True)
+                PrintColorString("Done", TextColors.OKGREEN)
+            except subprocess.CalledProcessError as cpe:
+                PrintColorString("Failed to install ssvnc: %s" %
+                                 cpe.output, TextColors.FAIL)
+                return
+        else:
+            return
+    ssvnc_env = os.environ.copy()
+    ssvnc_env.update(_SSVNC_ENV_VARS)
+    # Override SSVNC_SCALE
+    if avd_width or avd_height:
+        scale_ratio = CalculateVNCScreenRatio(avd_width, avd_height)
+        ssvnc_env["SSVNC_SCALE"] = str(scale_ratio)
+        logger.debug("SSVNC_SCALE:%s", scale_ratio)
+
+    ssvnc_args = _CMD_START_VNC % {"bin": find_executable(_VNC_BIN),
+                                   "port": port}
+    subprocess.Popen(ssvnc_args.split(), env=ssvnc_env)
+
+
+def PrintDeviceSummary(report):
+    """Display summary of devices created.
+
+    -Display created device details from the report instance.
+        report example:
+            'data': [{'devices':[{'instance_name': 'ins-f6a397-none-53363',
+                                  'ip': u'35.234.10.162'}]}]
+    -Display error message from report.error.
+
+    Args:
+        report: A Report instance.
+    """
+    PrintColorString("\n")
+    PrintColorString("Device(s) created:")
+    for device in report.data.get("devices", []):
+        adb_serial = "(None)"
+        adb_port = device.get("adb_port")
+        if adb_port:
+            adb_serial = constants.LOCALHOST_ADB_SERIAL % adb_port
+        instance_name = device.get("instance_name")
+        instance_ip = device.get("ip")
+        instance_details = "" if not instance_name else "(%s[%s])" % (
+            instance_name, instance_ip)
+        PrintColorString(" - device serial: %s %s" % (adb_serial,
+                                                      instance_details))
+
+    # TODO(b/117245508): Help user to delete instance if it got created.
+    if report.errors:
+        error_msg = "\n".join(report.errors)
+        PrintColorString("Fail in:\n%s\n" % error_msg, TextColors.FAIL)
+
+
+def CalculateVNCScreenRatio(avd_width, avd_height):
+    """calculate the vnc screen scale ratio to fit into user's monitor.
+
+    Args:
+        avd_width: String, the width of avd.
+        avd_height: String, the height of avd.
+    Return:
+        Float, scale ratio for vnc client.
+    """
+    root = Tkinter.Tk()
+    margin = 100 # leave some space on user's monitor.
+    screen_height = root.winfo_screenheight() - margin
+    screen_width = root.winfo_screenwidth() - margin
+
+    scale_h = 1
+    scale_w = 1
+    if float(screen_height) < float(avd_height):
+        scale_h = round(float(screen_height) / float(avd_height), 1)
+
+    if float(screen_width) < float(avd_width):
+        scale_w = round(float(screen_width) / float(avd_width), 1)
+
+    logger.debug("scale_h: %s (screen_h: %s/avd_h: %s),"
+                 " scale_w: %s (screen_w: %s/avd_w: %s)",
+                 scale_h, screen_height, avd_height,
+                 scale_w, screen_width, avd_width)
+
+    # Return the larger scale-down ratio.
+    return scale_h if scale_h < scale_w else scale_w
+
+
+def IsCommandRunning(command):
+    """Check if command is running.
+
+    Args:
+        command: String of command name.
+
+    Returns:
+        Boolean, True if command is running. False otherwise.
+    """
+    try:
+        with open(os.devnull, "w") as dev_null:
+            subprocess.check_call([_CMD_PGREP, command],
+                                  stderr=dev_null, stdout=dev_null)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def AddUserGroupsToCmd(cmd, user_groups):
+    """Add the user groups to the command if necessary.
+
+    As part of local host setup to enable local instance support, the user is
+    added to certain groups. For those settings to take effect systemwide
+    requires the user to log out and log back in. In the scenario where the
+    user has run setup and hasn't logged out, we still want them to be able to
+    launch a local instance so add the user to the groups as part of the
+    command to ensure success.
+
+    The reason using here-doc instead of '&' is all operations need to be ran in
+    ths same pid.  Here's an example cmd:
+    $ sg kvm  << EOF
+    sg libvirt
+    sg cvdnetwork
+    launch_cvd --cpus 2 --x_res 1280 --y_res 720 --dpi 160 --memory_mb 4096
+    EOF
+
+    Args:
+        cmd: String of the command to prepend the user groups to.
+        user_groups: List of user groups name.(String)
+
+    Returns:
+        String of the command with the user groups prepended to it if necessary,
+        otherwise the same existing command.
+    """
+    user_group_cmd = ""
+    if not CheckUserInGroups(user_groups):
+        logger.debug("Need to add user groups to the command")
+        for idx, group in enumerate(user_groups):
+            user_group_cmd += _CMD_SG + group
+            if idx == 0:
+                user_group_cmd += " <<EOF\n"
+            else:
+                user_group_cmd += "\n"
+        cmd += "\nEOF"
+    user_group_cmd += cmd
+    logger.debug("user group cmd: %s", user_group_cmd)
+    return user_group_cmd
+
+
+def CheckUserInGroups(group_name_list):
+    """Check if the current user is in the group.
+
+    Args:
+        group_name_list: The list of group name.
+    Returns:
+        True if current user is in all the groups.
+    """
+    logger.info("Checking if user is in following groups: %s", group_name_list)
+    current_groups = [grp.getgrgid(g).gr_name for g in os.getgroups()]
+    all_groups_present = True
+    for group in group_name_list:
+        if group not in current_groups:
+            all_groups_present = False
+            logger.info("missing group: %s", group)
+    return all_groups_present

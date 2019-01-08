@@ -49,10 +49,6 @@ from acloud.internal.lib import utils
 
 logger = logging.getLogger(__name__)
 
-ALL_SCOPES = " ".join([android_build_client.AndroidBuildClient.SCOPE,
-                       gstorage_client.StorageClient.SCOPE,
-                       android_compute_client.AndroidComputeClient.SCOPE])
-
 MAX_BATCH_CLEANUP_COUNT = 100
 
 #For gce_x86_phones remote instances: adb port is 5555 and vnc is 6444.
@@ -68,7 +64,7 @@ class AndroidVirtualDevicePool(object):
     def __init__(self, cfg, devices=None):
         self._devices = devices or []
         self._cfg = cfg
-        credentials = auth.CreateCredentials(cfg, ALL_SCOPES)
+        credentials = auth.CreateCredentials(cfg)
         self._build_client = android_build_client.AndroidBuildClient(
             credentials)
         self._storage_client = gstorage_client.StorageClient(credentials)
@@ -276,8 +272,8 @@ class AndroidVirtualDevicePool(object):
         return self._devices
 
 
-def _AddDeletionResultToReport(report_obj, deleted, failed, error_msgs,
-                               resource_name):
+def AddDeletionResultToReport(report_obj, deleted, failed, error_msgs,
+                              resource_name):
     """Adds deletion result to a Report object.
 
     This function will add the following to report.data.
@@ -370,7 +366,7 @@ def CreateAndroidVirtualDevices(cfg,
         A Report instance.
     """
     r = report.Report(command="create")
-    credentials = auth.CreateCredentials(cfg, ALL_SCOPES)
+    credentials = auth.CreateCredentials(cfg)
     compute_client = android_compute_client.AndroidComputeClient(cfg,
                                                                  credentials)
     try:
@@ -432,24 +428,25 @@ def CreateAndroidVirtualDevices(cfg,
     return r
 
 
-def DeleteAndroidVirtualDevices(cfg, instance_names):
+def DeleteAndroidVirtualDevices(cfg, instance_names, default_report=None):
     """Deletes android devices.
 
     Args:
         cfg: An AcloudConfig instance.
         instance_names: A list of names of the instances to delete.
+        default_report: A initialized Report instance.
 
     Returns:
         A Report instance.
     """
-    r = report.Report(command="delete")
-    credentials = auth.CreateCredentials(cfg, ALL_SCOPES)
+    r = default_report if default_report else report.Report(command="delete")
+    credentials = auth.CreateCredentials(cfg)
     compute_client = android_compute_client.AndroidComputeClient(cfg,
                                                                  credentials)
     try:
         deleted, failed, error_msgs = compute_client.DeleteInstances(
             instance_names, cfg.zone)
-        _AddDeletionResultToReport(
+        AddDeletionResultToReport(
             r, deleted,
             failed, error_msgs,
             resource_name="instance")
@@ -500,7 +497,7 @@ def Cleanup(cfg, expiration_mins):
         logger.info(
             "Cleaning up any gce images/instances and cached build artifacts."
             "in google storage that are older than %s", cut_time)
-        credentials = auth.CreateCredentials(cfg, ALL_SCOPES)
+        credentials = auth.CreateCredentials(cfg)
         compute_client = android_compute_client.AndroidComputeClient(
             cfg, credentials)
         storage_client = gstorage_client.StorageClient(credentials)
@@ -516,7 +513,7 @@ def Cleanup(cfg, expiration_mins):
             result = compute_client.DeleteInstances(
                 instances=cleanup_list[i:i + MAX_BATCH_CLEANUP_COUNT],
                 zone=cfg.zone)
-            _AddDeletionResultToReport(r, *result, resource_name="instance")
+            AddDeletionResultToReport(r, *result, resource_name="instance")
 
         # Cleanup expired images
         items = compute_client.ListImages()
@@ -530,7 +527,7 @@ def Cleanup(cfg, expiration_mins):
         for i in range(0, len(cleanup_list), MAX_BATCH_CLEANUP_COUNT):
             result = compute_client.DeleteImages(
                 image_names=cleanup_list[i:i + MAX_BATCH_CLEANUP_COUNT])
-            _AddDeletionResultToReport(r, *result, resource_name="image")
+            AddDeletionResultToReport(r, *result, resource_name="image")
 
         # Cleanup expired disks
         # Disks should have been attached to instances with autoDelete=True.
@@ -546,7 +543,7 @@ def Cleanup(cfg, expiration_mins):
             result = compute_client.DeleteDisks(
                 disk_names=cleanup_list[i:i + MAX_BATCH_CLEANUP_COUNT],
                 zone=cfg.zone)
-            _AddDeletionResultToReport(r, *result, resource_name="disk")
+            AddDeletionResultToReport(r, *result, resource_name="disk")
 
         # Cleanup expired google storage
         items = storage_client.List(bucket_name=cfg.storage_bucket_name)
@@ -559,7 +556,7 @@ def Cleanup(cfg, expiration_mins):
             result = storage_client.DeleteFiles(
                 bucket_name=cfg.storage_bucket_name,
                 object_names=cleanup_list[i:i + MAX_BATCH_CLEANUP_COUNT])
-            _AddDeletionResultToReport(
+            AddDeletionResultToReport(
                 r, *result, resource_name="cached_build_artifact")
 
         # Everything succeeded, write status to report.
@@ -584,7 +581,7 @@ def AddSshRsa(cfg, user, ssh_rsa_path):
     """
     r = report.Report(command="sshkey")
     try:
-        credentials = auth.CreateCredentials(cfg, ALL_SCOPES)
+        credentials = auth.CreateCredentials(cfg)
         compute_client = android_compute_client.AndroidComputeClient(
             cfg, credentials)
         compute_client.AddSshRsa(user, ssh_rsa_path)
@@ -601,7 +598,7 @@ def CheckAccess(cfg):
     Args:
          cfg: An AcloudConfig instance.
     """
-    credentials = auth.CreateCredentials(cfg, ALL_SCOPES)
+    credentials = auth.CreateCredentials(cfg)
     compute_client = android_compute_client.AndroidComputeClient(
         cfg, credentials)
     logger.info("Checking if user has access to project %s", cfg.project)
