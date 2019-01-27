@@ -89,24 +89,27 @@ USER_ANSWER_YES = {"y", "yes", "Y"}
 
 # Cuttlefish groups
 LIST_CF_USER_GROUPS = ["kvm", "libvirt", "cvdnetwork"]
+#For the cuttlefish remote instances: adb port is 6520 and vnc is 6444.
+CF_TARGET_ADB_PORT = 6520
+CF_TARGET_VNC_PORT = 6444
 
 DEFAULT_VNC_PORT = 6444
 DEFAULT_ADB_PORT = 6520
 VNC_PORT = "vnc_port"
 ADB_PORT = "adb_port"
 
+COMMAND_PS = ["ps", "aux"]
 CMD_LAUNCH_CVD = "launch_cvd"
 CMD_STOP_CVD = "stop_cvd"
 ENV_ANDROID_BUILD_TOP = "ANDROID_BUILD_TOP"
 
-LOCALHOST_ADB_SERIAL = "127.0.0.1:%d"
+LOCALHOST = "127.0.0.1"
+LOCALHOST_ADB_SERIAL = LOCALHOST + ":%d"
 
 SSH_BIN = "ssh"
 ADB_BIN = "adb"
 
 LABEL_CREATE_BY = "created_by"
-LABEL_FLAVOR = "flavor"
-LABEL_TYPE = "avd_type"
 
 # for list and delete cmd
 INS_KEY_NAME = "name"
@@ -117,8 +120,8 @@ INS_KEY_IP = "ip"
 INS_KEY_ADB = "adb"
 INS_KEY_VNC = "vnc"
 INS_KEY_CREATETIME = "creationTimestamp"
-INS_KEY_AVD_TYPE = LABEL_TYPE
-INS_KEY_AVD_FLAVOR = LABEL_FLAVOR
+INS_KEY_AVD_TYPE = "avd_type"
+INS_KEY_AVD_FLAVOR = "flavor"
 INS_KEY_IS_LOCAL = "remote"
 INS_STATUS_RUNNING = "RUNNING"
 LOCAL_INS_NAME = "local-instance"
