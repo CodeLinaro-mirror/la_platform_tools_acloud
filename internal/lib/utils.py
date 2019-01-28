@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-#
 # Copyright 2016 - The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Common Utilities."""
-
+# pylint: disable=too-many-lines
 from __future__ import print_function
 
 from distutils.spawn import find_executable
@@ -26,6 +24,7 @@ import getpass
 import grp
 import logging
 import os
+import platform
 import shutil
 import struct
 import socket
@@ -34,7 +33,6 @@ import sys
 import tarfile
 import tempfile
 import time
-import Tkinter
 import uuid
 import zipfile
 
@@ -46,6 +44,11 @@ logger = logging.getLogger(__name__)
 
 SSH_KEYGEN_CMD = ["ssh-keygen", "-t", "rsa", "-b", "4096"]
 SSH_KEYGEN_PUB_CMD = ["ssh-keygen", "-y"]
+SSH_ARGS = ["-o", "UserKnownHostsFile=/dev/null",
+            "-o", "StrictHostKeyChecking=no"]
+SSH_CMD = ["ssh"] + SSH_ARGS
+SCP_CMD = ["scp"] + SSH_ARGS
+GET_BUILD_VAR_CMD = ["build/soong/soong_ui.bash", "--dumpvar-mode"]
 DEFAULT_RETRY_BACKOFF_FACTOR = 1
 DEFAULT_SLEEP_MULTIPLIER = 0
 
@@ -59,18 +62,24 @@ _ADB_CONNECT_ARGS = "connect 127.0.0.1:%(adb_port)d"
 ForwardedPorts = collections.namedtuple("ForwardedPorts", [constants.VNC_PORT,
                                                            constants.ADB_PORT])
 _VNC_BIN = "ssvnc"
+_CMD_KILL = ["pkill", "-9", "-f"]
 _CMD_PGREP = "pgrep"
 _CMD_SG = "sg "
-_CMD_START_VNC = "%(bin)s vnc://127.0.01:%(port)d"
+_CMD_START_VNC = "%(bin)s vnc://127.0.0.1:%(port)d"
 _CMD_INSTALL_SSVNC = "sudo apt-get --assume-yes install ssvnc"
 _ENV_DISPLAY = "DISPLAY"
 _SSVNC_ENV_VARS = {"SSVNC_NO_ENC_WARN": "1", "SSVNC_SCALE": "auto"}
+_DEFAULT_DISPLAY_SCALE = 1.0
+_DIST_DIR = "DIST_DIR"
 
 _CONFIRM_CONTINUE = ("In order to display the screen to the AVD, we'll need to "
                      "install a vnc client (ssnvc). \nWould you like acloud to "
                      "install it for you? (%s) \nPress 'y' to continue or "
                      "anything else to abort it:[y] ") % _CMD_INSTALL_SSVNC
-
+_EvaluatedResult = collections.namedtuple("EvaluatedResult",
+                                          ["is_result_ok", "result_message"])
+# dict of supported system and their distributions.
+_SUPPORTED_SYSTEMS_AND_DISTS = {"Linux": ["Ubuntu", "Debian"]}
 
 class TempDir(object):
     """A context manager that ceates a temporary directory.
@@ -281,6 +290,39 @@ def MakeTarFile(src_dict, dest):
     with tarfile.open(dest, "w:gz") as tar:
         for src, arcname in src_dict.iteritems():
             tar.add(src, arcname=arcname)
+
+
+def ScpPullFile(src_file, dst_file, host_name, user_name=None,
+                rsa_key_file=None):
+    """Scp pull file from remote.
+
+    Args:
+        src_file: The source file path to be pulled.
+        dst_file: The destiation file path the file is pulled to.
+        host_name: The device host_name or ip to pull file from.
+        user_name: The user_name for scp session.
+        rsa_key_file: The rsa key file.
+    Raises:
+        errors.DeviceConnectionError if scp failed.
+    """
+    scp_cmd_list = SCP_CMD[:]
+    if rsa_key_file:
+        scp_cmd_list.extend(["-i", rsa_key_file])
+    else:
+        logger.warning(
+            "Rsa key file is not specified. "
+            "Will use default rsa key set in user environment")
+    if user_name:
+        scp_cmd_list.append("%s@%s:%s" % (user_name, host_name, src_file))
+    else:
+        scp_cmd_list.append("%s:%s" % (host_name, src_file))
+    scp_cmd_list.append(dst_file)
+    try:
+        subprocess.check_call(scp_cmd_list)
+    except subprocess.CalledProcessError as e:
+        raise errors.DeviceConnectionError(
+            "Failed to pull file %s from %s with '%s': %s" % (
+                src_file, host_name, " ".join(scp_cmd_list), e))
 
 
 def CreateSshKeyPairIfNotExist(private_key_path, public_key_path):
@@ -605,10 +647,33 @@ class BatchHttpRequestExecutor(object):
         return self._final_results
 
 
+def DefaultEvaluator(result):
+    """Default Evaluator always return result is ok.
+
+    Args:
+        result:the return value of the target function.
+    """
+    return _EvaluatedResult(is_result_ok=True, result_message=result)
+
+
+def ReportEvaluator(report):
+    """Evalute the the acloud operation by the report.
+
+    Args:
+        report:acloud.public.report() object.
+    """
+    if report is None or report.errors:
+        return _EvaluatedResult(is_result_ok=False, result_message=report.errors)
+
+    return _EvaluatedResult(is_result_ok=True, result_message=None)
+
+
 class TimeExecute(object):
     """Count the function execute time."""
 
-    def __init__(self, function_description=None, print_before_call=True, print_status=True):
+    def __init__(self, function_description=None, print_before_call=True,
+                 print_status=True, result_evaluator=DefaultEvaluator,
+                 display_waiting_dots=True):
         """Initializes the class.
 
         Args:
@@ -618,10 +683,18 @@ class TimeExecute(object):
                                calling the function, default True.
             print_status: Boolean, print the status of the function after the
                           function has completed, default True ("OK" or "Fail").
+            result_evaluator: Func object. Pass func to evaluate result.
+                              Default evaluator always report result is ok and
+                              failed result will be identified only in exception
+                              case.
+            display_waiting_dots: Boolean, if true print the function_description
+                                  followed by waiting dot.
         """
         self._function_description = function_description
         self._print_before_call = print_before_call
         self._print_status = print_status
+        self._result_evaluator = result_evaluator
+        self._display_waiting_dots = display_waiting_dots
 
     def __call__(self, func):
         def DecoratorFunction(*args, **kargs):
@@ -636,16 +709,27 @@ class TimeExecute(object):
             """
             timestart = time.time()
             if self._print_before_call:
-                PrintColorString("%s ..."% self._function_description, end="")
+                waiting_dots = "..." if self._display_waiting_dots else ""
+                PrintColorString("%s %s"% (self._function_description,
+                                           waiting_dots), end="")
             try:
                 result = func(*args, **kargs)
+                result_time = time.time() - timestart
                 if not self._print_before_call:
                     PrintColorString("%s (%ds)" % (self._function_description,
-                                                   time.time()-timestart),
+                                                   result_time),
                                      TextColors.OKGREEN)
                 if self._print_status:
-                    PrintColorString("OK! (%ds)" % (time.time()-timestart),
-                                     TextColors.OKGREEN)
+                    evaluated_result = self._result_evaluator(result)
+                    if evaluated_result.is_result_ok:
+                        PrintColorString("OK! (%ds)" % (result_time),
+                                         TextColors.OKGREEN)
+                    else:
+                        PrintColorString("Fail! (%ds)" % (result_time),
+                                         TextColors.FAIL)
+                        PrintColorString("Error: %s" %
+                                         evaluated_result.result_message,
+                                         TextColors.FAIL)
                 return result
             except:
                 if self._print_status:
@@ -741,14 +825,17 @@ def GetAnswerFromList(answer_list, enable_choose_all=False):
     """
     print("[0] to exit.")
     start_index = 1
+    max_choice = len(answer_list)
+
     if enable_choose_all:
         start_index = 2
+        max_choice += 1
         print("[1] for all.")
     for num, item in enumerate(answer_list, start_index):
         print("[%d] %s" % (num, item))
 
     choice = -1
-    max_choice = len(answer_list) + 1
+
     while True:
         try:
             choice = raw_input("Enter your choice[0-%d]: " % max_choice)
@@ -776,13 +863,13 @@ def LaunchVNCFromReport(report, avd_spec):
         avd_spec: AVDSpec object that tells us what we're going to create.
     """
     for device in report.data.get("devices", []):
-        _LaunchVncClient(device.get(constants.VNC_PORT),
-                         avd_width=avd_spec.hw_property["x_res"],
-                         avd_height=avd_spec.hw_property["y_res"])
+        LaunchVncClient(device.get(constants.VNC_PORT),
+                        avd_width=avd_spec.hw_property["x_res"],
+                        avd_height=avd_spec.hw_property["y_res"])
 
 
-def _LaunchVncClient(port=constants.DEFAULT_VNC_PORT, avd_width=None,
-                     avd_height=None):
+def LaunchVncClient(port=constants.DEFAULT_VNC_PORT, avd_width=None,
+                    avd_height=None):
     """Launch ssvnc.
 
     Args:
@@ -864,13 +951,18 @@ def CalculateVNCScreenRatio(avd_width, avd_height):
     Return:
         Float, scale ratio for vnc client.
     """
+    try:
+        import Tkinter
+    # Some python interpreters may not be configured for Tk, just return default scale ratio.
+    except ImportError:
+        return _DEFAULT_DISPLAY_SCALE
     root = Tkinter.Tk()
     margin = 100 # leave some space on user's monitor.
     screen_height = root.winfo_screenheight() - margin
     screen_width = root.winfo_screenwidth() - margin
 
-    scale_h = 1
-    scale_w = 1
+    scale_h = _DEFAULT_DISPLAY_SCALE
+    scale_w = _DEFAULT_DISPLAY_SCALE
     if float(screen_height) < float(avd_height):
         scale_h = round(float(screen_height) / float(avd_height), 1)
 
@@ -897,7 +989,7 @@ def IsCommandRunning(command):
     """
     try:
         with open(os.devnull, "w") as dev_null:
-            subprocess.check_call([_CMD_PGREP, command],
+            subprocess.check_call([_CMD_PGREP, "-f", command],
                                   stderr=dev_null, stdout=dev_null)
         return True
     except subprocess.CalledProcessError:
@@ -961,3 +1053,56 @@ def CheckUserInGroups(group_name_list):
             all_groups_present = False
             logger.info("missing group: %s", group)
     return all_groups_present
+
+
+def IsSupportedPlatform(print_warning=False):
+    """Check if user's os is the supported platform.
+
+    Args:
+        print_warning: Boolean, print the unsupported warning
+                       if True.
+    Returns:
+        Boolean, True if user is using supported platform.
+    """
+    system = platform.system()
+    dist = platform.linux_distribution()[0]
+    platform_supported = (system in _SUPPORTED_SYSTEMS_AND_DISTS and
+                          dist in _SUPPORTED_SYSTEMS_AND_DISTS[system])
+
+    logger.info("supported system and dists: %s",
+                _SUPPORTED_SYSTEMS_AND_DISTS)
+    platform_supported_msg = ("%s[%s] %s supported platform" %
+                              (system,
+                               dist,
+                               "is a" if platform_supported else "is not a"))
+    if print_warning and not platform_supported:
+        PrintColorString(platform_supported_msg, TextColors.WARNING)
+    else:
+        logger.info(platform_supported_msg)
+
+    return platform_supported
+
+
+def GetDistDir():
+    """Return the absolute path to the dist dir."""
+    android_build_top = os.environ.get(constants.ENV_ANDROID_BUILD_TOP)
+    if not android_build_top:
+        return None
+    dist_cmd = GET_BUILD_VAR_CMD[:]
+    dist_cmd.append(_DIST_DIR)
+    try:
+        dist_dir = subprocess.check_output(dist_cmd, cwd=android_build_top)
+    except subprocess.CalledProcessError:
+        return None
+    return os.path.join(android_build_top, dist_dir.strip())
+
+
+def CleanupProcess(pattern):
+    """Cleanup process with pattern.
+
+    Args:
+        pattern: String, string of process pattern.
+    """
+    if IsCommandRunning(pattern):
+        command_kill = _CMD_KILL + [pattern]
+        subprocess.check_call(command_kill)

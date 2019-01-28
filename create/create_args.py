@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-#
 # Copyright 2018 - The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +16,7 @@ r"""Create args.
 Defines the create arg parser that holds create specific args.
 """
 
+import argparse
 import os
 
 from acloud import errors
@@ -92,15 +91,13 @@ def AddCommonCreateArgs(parser):
         type=str,
         dest="serial_log_file",
         required=False,
-        help="Path to a *tar.gz file where serial logs will be saved "
-             "when a device fails on boot.")
+        help=argparse.SUPPRESS)
     parser.add_argument(
         "--logcat_file",
         type=str,
         dest="logcat_file",
         required=False,
-        help="Path to a *tar.gz file where logcat logs will be saved "
-             "when a device fails on boot.")
+        help=argparse.SUPPRESS)
 
 
 def GetCreateArgParser(subparser):
@@ -169,6 +166,12 @@ def GetCreateArgParser(subparser):
         required=False,
         help="Use the locally built image for the AVD. Look for the image "
         "artifact in $ANDROID_TARGET_OUT unless a path is specified.")
+    create_parser.add_argument(
+        "--image-download-dir",
+        type=str,
+        dest="image_download_dir",
+        required=False,
+        help="Define remote image download directory, e.g. /usr/local/dl.")
     # User should not specify --spec and --hw_property at the same time.
     hw_spec_group = create_parser.add_mutually_exclusive_group()
     hw_spec_group.add_argument(

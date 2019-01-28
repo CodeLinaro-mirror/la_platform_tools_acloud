@@ -31,7 +31,9 @@ This a tool to create Android Virtual Devices locally/remotely.
  - Create instances:
     1) To create a remote cuttlefish instance with the local built image.
        Example:
-       $ acloud create --local_image /tmp/image_dir
+       $ acloud create --local-image
+       Or specify built image dir:
+       $ acloud create --local-image /tmp/image_dir
     2) To create a local cuttlefish instance using the image which has been
        built out in your workspace.
        Example:
@@ -61,7 +63,11 @@ from acloud.create import create
 from acloud.create import create_args
 from acloud.delete import delete
 from acloud.delete import delete_args
+from acloud.reconnect import reconnect
+from acloud.reconnect import reconnect_args
 from acloud.internal import constants
+from acloud.list import list as list_instances
+from acloud.list import list_args
 from acloud.metrics import metrics
 from acloud.public import acloud_common
 from acloud.public import config
@@ -78,7 +84,6 @@ ACLOUD_LOGGER = "acloud"
 # Commands
 CMD_CREATE_CUTTLEFISH = "create_cf"
 CMD_CREATE_GOLDFISH = "create_gf"
-CMD_DELETE = "delete"
 CMD_CLEANUP = "cleanup"
 CMD_SSHKEY = "project_sshkey"
 
@@ -98,7 +103,9 @@ def _ParseArgs(args):
         create_args.CMD_CREATE,
         CMD_CREATE_CUTTLEFISH,
         CMD_CREATE_GOLDFISH,
+        list_args.CMD_LIST,
         delete_args.CMD_DELETE,
+        reconnect_args.CMD_RECONNECT,
     ])
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -228,8 +235,14 @@ def _ParseArgs(args):
     # Command "setup"
     subparser_list.append(setup_args.GetSetupArgParser(subparsers))
 
-    # Command "Delete"
+    # Command "delete"
     subparser_list.append(delete_args.GetDeleteArgParser(subparsers))
+
+    # Command "list"
+    subparser_list.append(list_args.GetListArgParser(subparsers))
+
+    # Command "Reconnect"
+    subparser_list.append(reconnect_args.GetReconnectArgParser(subparsers))
 
     # Add common arguments.
     for subparser in subparser_list:
@@ -347,7 +360,7 @@ def _SetupLogging(log_file, verbose):
         logger.addHandler(fhandler)
 
 
-def main(argv):
+def main(argv=None):
     """Main entry.
 
     Args:
@@ -356,6 +369,9 @@ def main(argv):
     Returns:
         0 if success. None-zero if fails.
     """
+    if argv is None:
+        argv = sys.argv[1:]
+
     args = _ParseArgs(argv)
     _SetupLogging(args.log_file, args.verbose)
     _VerifyArgs(args)
@@ -407,10 +423,14 @@ def main(argv):
             autoconnect=args.autoconnect,
             branch=args.branch,
             report_internal_ip=args.report_internal_ip)
-    elif args.which == CMD_DELETE:
+    elif args.which == delete_args.CMD_DELETE:
         report = delete.Run(args)
     elif args.which == CMD_CLEANUP:
         report = device_driver.Cleanup(cfg, args.expiration_mins)
+    elif args.which == list_args.CMD_LIST:
+        list_instances.Run(args)
+    elif args.which == reconnect_args.CMD_RECONNECT:
+        reconnect.Run(args)
     elif args.which == CMD_SSHKEY:
         report = device_driver.AddSshRsa(cfg, args.user, args.ssh_rsa_path)
     elif args.which == setup_args.CMD_SETUP:

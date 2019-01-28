@@ -24,6 +24,7 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
 
 from acloud import errors
 from acloud.create import create_common
@@ -82,11 +83,16 @@ class AVDSpec(object):
         self._instance_type = None
         self._kernel_build_id = None
         self._local_image_dir = None
+        self._image_download_dir = None
         self._num_of_instances = None
         self._remote_image = None
         self._hw_property = None
         # Create config instance for android_build_client to query build api.
         self._cfg = config.GetAcloudConfig(args)
+        # Reporting args.
+        self._serial_log_file = None
+        self._logcat_file = None
+
         self._ProcessArgs(args)
 
     def __repr__(self):
@@ -143,6 +149,10 @@ class AVDSpec(object):
         else:
             self._image_source = constants.IMAGE_SRC_LOCAL
             self._ProcessLocalImageArgs(args)
+
+        self.image_download_dir = (
+            args.image_download_dir if args.image_download_dir
+            else tempfile.gettempdir())
 
     @staticmethod
     def _ParseHWPropertyStr(hw_property_str):
@@ -221,6 +231,8 @@ class AVDSpec(object):
                                constants.INSTANCE_TYPE_REMOTE)
         self._num_of_instances = args.num
         self._kernel_build_id = args.kernel_build_id
+        self._serial_log_file = args.serial_log_file
+        self._logcat_file = args.logcat_file
 
     def _ProcessLocalImageArgs(self, args):
         """Get local image path.
@@ -395,3 +407,23 @@ class AVDSpec(object):
     def cfg(self):
         """Return cfg instance."""
         return self._cfg
+
+    @property
+    def image_download_dir(self):
+        """Return image download dir."""
+        return self._image_download_dir
+
+    @image_download_dir.setter
+    def image_download_dir(self, value):
+        """Set image download dir."""
+        self._image_download_dir = value
+
+    @property
+    def serial_log_file(self):
+        """Return serial log file path."""
+        return self._serial_log_file
+
+    @property
+    def logcat_file(self):
+        """Return logcat file path."""
+        return self._logcat_file
