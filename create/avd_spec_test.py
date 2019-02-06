@@ -18,6 +18,7 @@ import mock
 
 from acloud import errors
 from acloud.create import avd_spec
+from acloud.create import create_common
 from acloud.internal import constants
 
 
@@ -30,12 +31,15 @@ class AvdSpecTest(unittest.TestCase):
         self.args = mock.MagicMock()
         self.args.local_image = ""
         self.args.config_file = ""
+        self.args.build_target = "fake_build_target"
         self.AvdSpec = avd_spec.AVDSpec(self.args)
 
     # pylint: disable=protected-access
-    def testProcessLocalImageArgs(self):
+    @mock.patch.object(create_common, "VerifyLocalImageArtifactsExist")
+    def testProcessLocalImageArgs(self, mock_image):
         """Test process args.local_image."""
         # Specified local_image with an arg
+        mock_image.return_value = "cf_x86_phone-img-eng.user.zip"
         self.args.local_image = "test_path"
         self.AvdSpec._ProcessLocalImageArgs(self.args)
         self.assertEqual(self.AvdSpec._local_image_dir, "test_path")
@@ -46,7 +50,8 @@ class AvdSpecTest(unittest.TestCase):
             self.AvdSpec._ProcessLocalImageArgs(self.args)
             self.assertEqual(self.AvdSpec._local_image_dir, "test_environ")
 
-    def testProcessImageArgs(self):
+    @mock.patch.object(create_common, "VerifyLocalImageArtifactsExist")
+    def testProcessImageArgs(self, mock_image):
         """Test process image source."""
         # No specified local_image, image source is from remote
         self.args.local_image = ""
@@ -55,11 +60,11 @@ class AvdSpecTest(unittest.TestCase):
         self.assertEqual(self.AvdSpec._local_image_dir, None)
 
         # Specified local_image with an arg, image source is from local
+        mock_image.return_value = "cf_x86_phone-img-eng.user.zip"
         self.args.local_image = "test_path"
         self.AvdSpec._ProcessImageArgs(self.args)
         self.assertEqual(self.AvdSpec._image_source, constants.IMAGE_SRC_LOCAL)
         self.assertEqual(self.AvdSpec._local_image_dir, "test_path")
-        self.AvdSpec = avd_spec.AVDSpec(self.args)
 
     @mock.patch.object(avd_spec.AVDSpec, "_GetGitRemote")
     @mock.patch("subprocess.check_output")
@@ -82,22 +87,22 @@ class AvdSpecTest(unittest.TestCase):
     # pylint: disable=protected-access
     def testGetBuildTarget(self):
         """Test get build target name."""
-        self.AvdSpec._remote_image[avd_spec._BUILD_BRANCH] = "aosp-master"
-        self.args.flavor = constants.FLAVOR_IOT
+        self.AvdSpec._remote_image[avd_spec._BUILD_BRANCH] = "git_branch"
+        self.AvdSpec._flavor = constants.FLAVOR_IOT
         self.args.avd_type = constants.TYPE_GCE
         self.assertEqual(
             self.AvdSpec._GetBuildTarget(self.args),
-            "aosp_gce_x86_iot-userdebug")
+            "gce_x86_iot-userdebug")
 
         self.AvdSpec._remote_image[avd_spec._BUILD_BRANCH] = "aosp-master"
-        self.args.flavor = constants.FLAVOR_PHONE
+        self.AvdSpec._flavor = constants.FLAVOR_PHONE
         self.args.avd_type = constants.TYPE_CF
         self.assertEqual(
             self.AvdSpec._GetBuildTarget(self.args),
             "aosp_cf_x86_phone-userdebug")
 
         self.AvdSpec._remote_image[avd_spec._BUILD_BRANCH] = "git_branch"
-        self.args.flavor = constants.FLAVOR_PHONE
+        self.AvdSpec._flavor = constants.FLAVOR_PHONE
         self.args.avd_type = constants.TYPE_CF
         self.assertEqual(
             self.AvdSpec._GetBuildTarget(self.args),
@@ -138,6 +143,59 @@ class AvdSpecTest(unittest.TestCase):
         args_str = "cpu:2,resolution:1080x1920,dpi:240,memory:4g,disk:4g"
         result_dict = self.AvdSpec._ParseHWPropertyStr(args_str)
         self.assertTrue(expected_dict == result_dict)
+
+    def testGetFlavorFromLocalImage(self):
+        """Test _GetFlavorFromLocalImage."""
+        img_path = "/fack_path/cf_x86_tv-img-eng.user.zip"
+        self.assertEqual(self.AvdSpec._GetFlavorFromLocalImage(img_path), "tv")
+
+        # Flavor is not supported.
+        img_path = "/fack_path/cf_x86_error-img-eng.user.zip"
+        self.assertEqual(self.AvdSpec._GetFlavorFromLocalImage(img_path), None)
+
+    # pylint: disable=protected-access
+    def testProcessRemoteBuildArgs(self):
+        """Test _ProcessRemoteBuildArgs."""
+        self.args.branch = "git_master"
+        self.args.build_id = "1234"
+
+        # Verify auto-assigned avd_type if build_targe contains "_gce_".
+        self.args.build_target = "aosp_gce_x86_phone-userdebug"
+        self.AvdSpec._ProcessRemoteBuildArgs(self.args)
+        self.assertTrue(self.AvdSpec.avd_type == "gce")
+
+        # Verify auto-assigned avd_type if build_targe contains "gce_".
+        self.args.build_target = "gce_x86_phone-userdebug"
+        self.AvdSpec._ProcessRemoteBuildArgs(self.args)
+        self.assertTrue(self.AvdSpec.avd_type == "gce")
+
+        # Verify auto-assigned avd_type if build_targe contains "_cf_".
+        self.args.build_target = "aosp_cf_x86_phone-userdebug"
+        self.AvdSpec._ProcessRemoteBuildArgs(self.args)
+        self.assertTrue(self.AvdSpec.avd_type == "cuttlefish")
+
+        # Verify auto-assigned avd_type if build_targe contains "cf_".
+        self.args.build_target = "cf_x86_phone-userdebug"
+        self.AvdSpec._ProcessRemoteBuildArgs(self.args)
+        self.assertTrue(self.AvdSpec.avd_type == "cuttlefish")
+
+        # Verify auto-assigned avd_type if build_targe contains "sdk_".
+        self.args.build_target = "sdk_phone_armv7-sdk"
+        self.AvdSpec._ProcessRemoteBuildArgs(self.args)
+        self.assertTrue(self.AvdSpec.avd_type == "goldfish")
+
+        # Verify auto-assigned avd_type if build_targe contains "_sdk_".
+        self.args.build_target = "aosp_sdk_phone_armv7-sdk"
+        self.AvdSpec._ProcessRemoteBuildArgs(self.args)
+        self.assertTrue(self.AvdSpec.avd_type == "goldfish")
+
+        # Verify auto-assigned avd_type if no match, default as cuttlefish.
+        self.args.build_target = "mini_emulator_arm64-userdebug"
+        self.args.avd_type = "cuttlefish"
+        # reset args.avd_type default value as cuttlefish.
+        self.AvdSpec = avd_spec.AVDSpec(self.args)
+        self.AvdSpec._ProcessRemoteBuildArgs(self.args)
+        self.assertTrue(self.AvdSpec.avd_type == "cuttlefish")
 
 
 if __name__ == "__main__":

@@ -27,14 +27,12 @@ import sys
 
 from acloud import errors
 from acloud.create import base_avd_create
-from acloud.create import create_common
 from acloud.internal import constants
 from acloud.internal.lib import utils
 from acloud.public import report
 
 logger = logging.getLogger(__name__)
 
-_BOOT_COMPLETE = "VIRTUAL_DEVICE_BOOT_COMPLETED"
 _CMD_LAUNCH_CVD_ARGS = (" --daemon --cpus %s --x_res %s --y_res %s --dpi %s "
                         "--memory_mb %s --blank_data_image_mb %s "
                         "--data_policy always_create "
@@ -44,7 +42,9 @@ _CONFIRM_RELAUNCH = ("\nCuttlefish AVD is already running. \n"
                      "Enter 'y' to terminate current instance and launch a new "
                      "instance, enter anything else to exit out [y]: ")
 _ENV_ANDROID_HOST_OUT = "ANDROID_HOST_OUT"
-
+_LAUNCH_CVD_TIMEOUT_SECS = 60  # setup timeout as 60 seconds
+_LAUNCH_CVD_TIMEOUT_ERROR = ("Cuttlefish AVD launch timeout, did not complete "
+                             "within %d secs." % _LAUNCH_CVD_TIMEOUT_SECS)
 
 class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
     """Create class for a local image local instance AVD."""
@@ -91,8 +91,8 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
     def GetImageArtifactsPath(avd_spec):
         """Get image artifacts path.
 
-        This method will check if local image and launch_cvd are exist and
-        return the tuple path where they are located respectively.
+        This method will check if launch_cvd is exist and return the tuple path
+        (image path and host bins path) where they are located respectively.
         For remote image, RemoteImageLocalInstance will override this method and
         return the artifacts path which is extracted and downloaded from remote.
 
@@ -102,17 +102,6 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
         Returns:
             Tuple of (local image file, host bins package) paths.
         """
-        try:
-            # Check if local image is exist.
-            create_common.VerifyLocalImageArtifactsExist(
-                avd_spec.local_image_dir)
-
-        # TODO(b/117306227): help user to build out images and host package if
-        # anything needed is not found.
-        except errors.GetLocalImageError as imgerror:
-            logger.error(imgerror.message)
-            raise imgerror
-
         # Check if launch_cvd is exist.
         host_bins_path = os.environ.get(_ENV_ANDROID_HOST_OUT)
         launch_cvd_path = os.path.join(host_bins_path, "bin",
@@ -148,9 +137,7 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
         logger.debug("launch_cvd cmd:\n %s", launch_cmd)
         return launch_cmd
 
-    @staticmethod
-    @utils.TimeExecute(function_description="Waiting for AVD(s) to boot up")
-    def CheckLaunchCVD(cmd, host_bins_path):
+    def CheckLaunchCVD(self, cmd, host_bins_path):
         """Execute launch_cvd command and wait for boot up completed.
 
         Args:
@@ -176,7 +163,22 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
             else:
                 print("Exiting out")
                 sys.exit()
+        self._LaunchCvd(cmd)
 
+    @staticmethod
+    @utils.TimeExecute(function_description="Waiting for AVD(s) to boot up")
+    @utils.TimeoutException(_LAUNCH_CVD_TIMEOUT_SECS, _LAUNCH_CVD_TIMEOUT_ERROR)
+    def _LaunchCvd(cmd):
+        """Execute Launch CVD.
+
+        Kick off the launch_cvd command and log the output.
+
+        Args:
+            cmd: String, launch_cvd command.
+
+        Raises:
+            errors.LaunchCVDFail when any CalledProcessError.
+        """
         try:
             # Check the result of launch_cvd command.
             # An exit code of 0 is equivalent to VIRTUAL_DEVICE_BOOT_COMPLETED
