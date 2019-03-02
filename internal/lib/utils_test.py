@@ -23,13 +23,19 @@ import shutil
 import subprocess
 import tempfile
 import time
-import Tkinter
 
 import unittest
 import mock
 
+from acloud import errors
 from acloud.internal.lib import driver_test_lib
 from acloud.internal.lib import utils
+
+# Tkinter may not be supported so mock it out.
+try:
+    import Tkinter
+except ImportError:
+    Tkinter = mock.Mock()
 
 class FakeTkinter(object):
     """Fake implementation of Tkinter.Tk()"""
@@ -49,6 +55,7 @@ class FakeTkinter(object):
         return self.width
 
 
+# pylint: disable=too-many-public-methods
 class UtilsTest(driver_test_lib.BaseDriverTest):
     """Test Utils."""
 
@@ -263,6 +270,7 @@ class UtilsTest(driver_test_lib.BaseDriverTest):
                                                  enable_choose_all=True),
                          answer_list)
 
+    @unittest.skipIf(isinstance(Tkinter, mock.Mock), "Tkinter mocked out, test case not needed.")
     @mock.patch.object(Tkinter, "Tk")
     def testCalculateVNCScreenRatio(self, mock_tk):
         """Test Calculating the scale ratio of VNC display."""
@@ -330,6 +338,66 @@ class UtilsTest(driver_test_lib.BaseDriverTest):
         expected_value = "sg group1 <<EOF\nsg group2\ntest_command\nEOF"
         self.assertEqual(expected_value, utils.AddUserGroupsToCmd(command,
                                                                   groups))
+
+    @staticmethod
+    def testScpPullFileSuccess():
+        """Test scp pull file successfully."""
+        subprocess.check_call = mock.MagicMock()
+        utils.ScpPullFile("/tmp/test", "/tmp/test_1.log", "192.168.0.1")
+        subprocess.check_call.assert_called_with(utils.SCP_CMD + [
+            "192.168.0.1:/tmp/test", "/tmp/test_1.log"])
+
+    @staticmethod
+    def testScpPullFileWithUserNameSuccess():
+        """Test scp pull file successfully."""
+        subprocess.check_call = mock.MagicMock()
+        utils.ScpPullFile("/tmp/test", "/tmp/test_1.log", "192.168.0.1",
+                          user_name="abc")
+        subprocess.check_call.assert_called_with(utils.SCP_CMD + [
+            "abc@192.168.0.1:/tmp/test", "/tmp/test_1.log"])
+
+    # pylint: disable=invalid-name
+    @staticmethod
+    def testScpPullFileWithUserNameWithRsaKeySuccess():
+        """Test scp pull file successfully."""
+        subprocess.check_call = mock.MagicMock()
+        utils.ScpPullFile("/tmp/test", "/tmp/test_1.log", "192.168.0.1",
+                          user_name="abc", rsa_key_file="/tmp/my_key")
+        subprocess.check_call.assert_called_with(utils.SCP_CMD + [
+            "-i", "/tmp/my_key", "abc@192.168.0.1:/tmp/test",
+            "/tmp/test_1.log"])
+
+    def testScpPullFileScpFailure(self):
+        """Test scp pull file failure."""
+        subprocess.check_call = mock.MagicMock(
+            side_effect=subprocess.CalledProcessError(123, "fake",
+                                                      "fake error"))
+        self.assertRaises(
+            errors.DeviceConnectionError,
+            utils.ScpPullFile, "/tmp/test", "/tmp/test_1.log", "192.168.0.1")
+
+
+    def testTimeoutException(self):
+        """Test TimeoutException."""
+        @utils.TimeoutException(1, "should time out")
+        def functionThatWillTimeOut():
+            """Test decorator of @utils.TimeoutException should timeout."""
+            time.sleep(5)
+
+        self.assertRaises(errors.FunctionTimeoutError,
+                          functionThatWillTimeOut)
+
+
+    def testTimeoutExceptionNoTimeout(self):
+        """Test No TimeoutException."""
+        @utils.TimeoutException(5, "shouldn't time out")
+        def functionThatShouldNotTimeout():
+            """Test decorator of @utils.TimeoutException shouldn't timeout."""
+            return None
+        try:
+            functionThatShouldNotTimeout()
+        except errors.FunctionTimeoutError:
+            self.fail("shouldn't timeout")
 
 
 if __name__ == "__main__":

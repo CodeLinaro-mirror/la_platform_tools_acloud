@@ -20,6 +20,7 @@ import unittest
 import mock
 
 from acloud.create import avd_spec
+from acloud.create import create_common
 from acloud.internal import constants
 from acloud.internal.lib import cvd_compute_client
 from acloud.internal.lib import driver_test_lib
@@ -72,6 +73,7 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
         self.cvd_compute_client = cvd_compute_client.CvdComputeClient(
             self._GetFakeConfig(), mock.MagicMock())
 
+    @mock.patch.object(create_common, "VerifyLocalImageArtifactsExist")
     @mock.patch.object(gcompute_client.ComputeClient, "CompareMachineSize",
                        return_value=1)
     @mock.patch.object(gcompute_client.ComputeClient, "GetImage",
@@ -81,7 +83,7 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
                        return_value=[{"fake_arg": "fake_value"}])
     @mock.patch("getpass.getuser", return_value="fake_user")
     def testCreateInstance(self, _get_user, _get_disk_args, mock_create,
-                           _get_image, _compare_machine_size):
+                           _get_image, _compare_machine_size, mock_img_path):
         """Test CreateInstance."""
         expected_metadata = {
             "cvd_01_dpi": str(self.DPI),
@@ -90,7 +92,6 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
                 branch=self.BRANCH, build_id=self.BUILD_ID),
             "cvd_01_fetch_kernel_bid": "{branch}/{build_id}".format(
                 branch=self.KERNEL_BRANCH, build_id=self.KERNEL_BUILD_ID),
-            "cvd_01_launch": "1",
             "cvd_01_x_res": str(self.X_RES),
             "cvd_01_y_res": str(self.Y_RES),
             "user": "fake_user",
@@ -99,6 +100,8 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
             "cvd_01_blank_data_disk_size": str(self.EXTRA_DATA_DISK_SIZE_GB * 1024),
         }
         expected_metadata.update(self.METADATA)
+        remote_image_metadata = dict(expected_metadata)
+        remote_image_metadata["cvd_01_launch"] = "1"
         expected_disk_args = [{"fake_arg": "fake_value"}]
 
         self.cvd_compute_client.CreateInstance(
@@ -112,13 +115,16 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
             image_name=self.IMAGE,
             image_project=self.IMAGE_PROJECT,
             disk_args=expected_disk_args,
-            metadata=expected_metadata,
+            metadata=remote_image_metadata,
             machine_type=self.MACHINE_TYPE,
             network=self.NETWORK,
-            zone=self.ZONE)
+            zone=self.ZONE,
+            labels={constants.LABEL_CREATE_BY: "fake_user"})
 
         #test use local image in the remote instance.
+        local_image_metadata = dict(expected_metadata)
         args = mock.MagicMock()
+        mock_img_path.return_value = "cf_x86_phone-img-eng.user.zip"
         args.local_image = "/tmp/path"
         args.config_file = ""
         args.avd_type = "cf"
@@ -129,23 +135,30 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
         fake_avd_spec.hw_property[constants.HW_ALIAS_DPI] = str(self.DPI)
         fake_avd_spec.hw_property[constants.HW_ALIAS_DISK] = str(
             self.EXTRA_DATA_DISK_SIZE_GB * 1024)
-        expected_metadata["cvd_01_launch"] = "0"
-        expected_metadata["avd_type"] = "cf"
-        expected_metadata["flavor"] = "phone"
+        local_image_metadata["avd_type"] = "cf"
+        local_image_metadata["flavor"] = "phone"
+        local_image_metadata[constants.INS_KEY_DISPLAY] = ("%sx%s (%s)" % (
+            fake_avd_spec.hw_property[constants.HW_X_RES],
+            fake_avd_spec.hw_property[constants.HW_Y_RES],
+            fake_avd_spec.hw_property[constants.HW_ALIAS_DPI]))
         self.cvd_compute_client.CreateInstance(
             self.INSTANCE, self.IMAGE, self.IMAGE_PROJECT, self.TARGET, self.BRANCH,
             self.BUILD_ID, self.KERNEL_BRANCH, self.KERNEL_BUILD_ID,
             self.EXTRA_DATA_DISK_SIZE_GB, fake_avd_spec)
 
+        expected_labels = {constants.LABEL_CREATE_BY: "fake_user"}
         mock_create.assert_called_with(
             self.cvd_compute_client,
             instance=self.INSTANCE,
             image_name=self.IMAGE,
             image_project=self.IMAGE_PROJECT,
             disk_args=expected_disk_args,
-            metadata=expected_metadata,
+            metadata=local_image_metadata,
             machine_type=self.MACHINE_TYPE,
             network=self.NETWORK,
-            zone=self.ZONE)
+            zone=self.ZONE,
+            labels=expected_labels)
+
+
 if __name__ == "__main__":
     unittest.main()

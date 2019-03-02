@@ -11,5 +11,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+r"""List args.
 
-$(call dist-for-goals,droidcore,$(HOST_OUT_EXECUTABLES)/acloud)
+Defines the list arg parser that holds list specific args.
+"""
+
+CMD_LIST = "list"
+
+
+def GetListArgParser(subparser):
+    """Return the list arg parser.
+
+    Args:
+       subparser: argparse.ArgumentParser that is attached to main acloud cmd.
+
+    Returns:
+        argparse.ArgumentParser with list options defined.
+    """
+    list_parser = subparser.add_parser(CMD_LIST)
+    list_parser.required = False
+    list_parser.set_defaults(which=CMD_LIST)
+
+    return list_parser

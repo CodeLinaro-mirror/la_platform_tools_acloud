@@ -26,7 +26,6 @@ import os
 import subprocess
 
 from acloud import errors
-from acloud.create import create_common
 from acloud.create import base_avd_create
 from acloud.internal import constants
 from acloud.internal.lib import auth
@@ -221,7 +220,6 @@ class LocalImageRemoteInstance(base_avd_create.BaseAVDCreate):
 
     def __init__(self):
         """LocalImageRemoteInstance initialize."""
-        self.local_image_artifact = None
         self.cvd_host_package_artifact = None
 
     def VerifyArtifactsExist(self, local_image_dir):
@@ -230,8 +228,6 @@ class LocalImageRemoteInstance(base_avd_create.BaseAVDCreate):
         Arsg:
             local_image_dir: A string, path to check the artifacts.
         """
-        self.local_image_artifact = create_common.VerifyLocalImageArtifactsExist(
-            local_image_dir)
         self.cvd_host_package_artifact = self.VerifyHostPackageArtifactsExist(
             local_image_dir)
 
@@ -248,10 +244,11 @@ class LocalImageRemoteInstance(base_avd_create.BaseAVDCreate):
         Return:
             A string, the path to the host package.
         """
-        dist_dir = os.path.join(
-            os.environ.get(constants.ENV_ANDROID_BUILD_TOP, "."), "out", "dist")
-        cvd_host_package_artifact = self.GetCvdHostPackage(
-            [local_image_dir, dist_dir])
+        dirs_to_check = [local_image_dir]
+        dist_dir = utils.GetDistDir()
+        if dist_dir:
+            dirs_to_check.append(dist_dir)
+        cvd_host_package_artifact = self.GetCvdHostPackage(dirs_to_check)
         logger.debug("cvd host package: %s", cvd_host_package_artifact)
         return cvd_host_package_artifact
 
@@ -273,8 +270,8 @@ class LocalImageRemoteInstance(base_avd_create.BaseAVDCreate):
             if os.path.exists(cvd_host_package):
                 return cvd_host_package
         raise errors.GetCvdLocalHostPackageError, (
-            "Can't find the cvd host package: \n%s" %
-            '\n'.join(paths))
+            "Can't find the cvd host package (Try building with 'm dist'): \n%s"
+            % '\n'.join(paths))
 
     @utils.TimeExecute(function_description="Total time: ",
                        print_before_call=False, print_status=False)
@@ -287,7 +284,7 @@ class LocalImageRemoteInstance(base_avd_create.BaseAVDCreate):
         self.VerifyArtifactsExist(avd_spec.local_image_dir)
         device_factory = RemoteInstanceDeviceFactory(
             avd_spec,
-            self.local_image_artifact,
+            avd_spec.local_image_artifact,
             self.cvd_host_package_artifact)
         report = common_operations.CreateDevices(
             "create_cf", avd_spec.cfg, device_factory, avd_spec.num,
