@@ -50,13 +50,6 @@ def AddCommonCreateArgs(parser):
         help="Path to a *tar.gz file where serial logs will be saved "
              "when a device fails on boot.")
     parser.add_argument(
-        "--logcat-file",
-        type=str,
-        dest="logcat_file",
-        required=False,
-        help="Path to a *tar.gz file where logcat logs will be saved "
-             "when a device fails on boot.")
-    parser.add_argument(
         "--autoconnect",
         action="store_true",
         dest="autoconnect",
@@ -72,6 +65,13 @@ def AddCommonCreateArgs(parser):
         help="Will not automatically create ssh tunnels forwarding adb & vnc "
              "when instance created.")
     parser.set_defaults(autoconnect=True)
+    parser.add_argument(
+        "--unlock",
+        action="store_true",
+        dest="unlock_screen",
+        required=False,
+        default=False,
+        help="This can unlock screen after invoke vnc client.")
     parser.add_argument(
         "--report-internal-ip",
         action="store_true",
@@ -183,12 +183,6 @@ def AddCommonCreateArgs(parser):
         "--serial_log_file",
         type=str,
         dest="serial_log_file",
-        required=False,
-        help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--logcat_file",
-        type=str,
-        dest="logcat_file",
         required=False,
         help=argparse.SUPPRESS)
     parser.add_argument(
@@ -408,3 +402,6 @@ def VerifyArgs(args):
                          % constants.TYPE_CHEEPS)
     if (args.username or args.password) and not (args.username and args.password):
         raise ValueError("--username and --password must both be set")
+    if not args.autoconnect and args.unlock_screen:
+        raise ValueError("--no-autoconnect and --unlock couldn't be "
+                         "passed in together.")

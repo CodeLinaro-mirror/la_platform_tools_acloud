@@ -99,6 +99,7 @@ class AVDSpec(object):
         # args afterwards.
         self._client_adb_port = args.adb_port
         self._autoconnect = None
+        self._unlock_screen = None
         self._report_internal_ip = None
         self._avd_type = None
         self._flavor = None
@@ -116,7 +117,6 @@ class AVDSpec(object):
         self._cfg = config.GetAcloudConfig(args)
         # Reporting args.
         self._serial_log_file = None
-        self._logcat_file = None
         # gpu and emulator_build_id is only used for goldfish avd_type.
         self._gpu = None
         self._emulator_build_id = None
@@ -259,6 +259,7 @@ class AVDSpec(object):
             args: Namespace object from argparse.parse_args.
         """
         self._autoconnect = args.autoconnect
+        self._unlock_screen = args.unlock_screen
         self._report_internal_ip = args.report_internal_ip
         self._avd_type = args.avd_type
         self._flavor = args.flavor or constants.FLAVOR_PHONE
@@ -267,7 +268,6 @@ class AVDSpec(object):
                                constants.INSTANCE_TYPE_REMOTE)
         self._num_of_instances = args.num
         self._serial_log_file = args.serial_log_file
-        self._logcat_file = args.logcat_file
         self._emulator_build_id = args.emulator_build_id
         self._gpu = args.gpu
 
@@ -563,6 +563,11 @@ class AVDSpec(object):
         return self._autoconnect
 
     @property
+    def unlock_screen(self):
+        """Return unlock_screen."""
+        return self._unlock_screen
+
+    @property
     def remote_image(self):
         """Return the remote image."""
         return self._remote_image
@@ -606,11 +611,6 @@ class AVDSpec(object):
     def serial_log_file(self):
         """Return serial log file path."""
         return self._serial_log_file
-
-    @property
-    def logcat_file(self):
-        """Return logcat file path."""
-        return self._logcat_file
 
     @property
     def gpu(self):
