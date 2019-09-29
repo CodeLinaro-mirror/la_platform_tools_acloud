@@ -29,12 +29,15 @@ generic, and only knows how to talk to Compute Engine APIs.
 import collections
 import copy
 import functools
+import getpass
 import logging
 import os
 
 from acloud import errors
+from acloud.internal import constants
 from acloud.internal.lib import base_cloud_client
 from acloud.internal.lib import utils
+
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +108,7 @@ class ComputeClient(base_cloud_client.BaseCloudApiClient):
     ])
     # Default settings for gce operations
     DEFAULT_INSTANCE_SCOPE = [
+        "https://www.googleapis.com/auth/androidbuild.internal",
         "https://www.googleapis.com/auth/devstorage.read_only",
         "https://www.googleapis.com/auth/logging.write"
     ]
@@ -1013,14 +1017,18 @@ class ComputeClient(base_cloud_client.BaseCloudApiClient):
         Returns:
             A dictionary representing network args.
         """
-        return {
+        network_args = {
             "network": self.GetNetworkUrl(network),
-            "subnetwork": self.GetSubnetworkUrl(network, zone),
             "accessConfigs": [{
                 "name": "External NAT",
                 "type": "ONE_TO_ONE_NAT"
             }]
         }
+        # default network can be blank or set to default, we don't need to
+        # specify the subnetwork for that.
+        if network and network != "default":
+            network_args["subnetwork"] = self.GetSubnetworkUrl(network, zone)
+        return network_args
 
     def _GetDiskArgs(self,
                      disk_name,
@@ -1083,7 +1091,6 @@ class ComputeClient(base_cloud_client.BaseCloudApiClient):
                        image_project=None,
                        gpu=None,
                        extra_disk_name=None,
-                       labels=None,
                        extra_scopes=None,
                        tags=None):
         """Create a gce instance with a gce image.
@@ -1105,7 +1112,6 @@ class ComputeClient(base_cloud_client.BaseCloudApiClient):
                  None no gpus will be attached. For more details see:
                  https://cloud.google.com/compute/docs/gpus/add-gpus
             extra_disk_name: String,the name of the extra disk to attach.
-            labels: Dict, will be added to the instance's labels.
             extra_scopes: A list of extra scopes to be provided to the instance.
             tags: A list of tags to associate with the instance. e.g.
                   ["http-server", "https-server"]
@@ -1120,22 +1126,22 @@ class ComputeClient(base_cloud_client.BaseCloudApiClient):
         if extra_scopes:
             scopes.extend(extra_scopes)
 
+        # Add labels for giving the instances ability to be filter for
+        # acloud list/delete cmds.
         body = {
             "machineType": self.GetMachineType(machine_type, zone)["selfLink"],
             "name": instance,
             "networkInterfaces": [self._GetNetworkArgs(network, zone)],
             "disks": disk_args,
+            "labels": {constants.LABEL_CREATE_BY: getpass.getuser()},
             "serviceAccounts": [{
                 "email": "default",
                 "scopes": scopes,
             }],
         }
 
-
-        if labels is not None:
-            body["labels"] = labels
         if tags:
-            body["tags"] = { "items": tags }
+            body["tags"] = {"items": tags}
         if gpu:
             body["guestAccelerators"] = [{
                 "acceleratorType": self.GetAcceleratorUrl(gpu, zone),
@@ -1280,7 +1286,7 @@ class ComputeClient(base_cloud_client.BaseCloudApiClient):
             project=self._project, network=network)
         result = self.Execute(api)
         region = zone.rsplit("-", 1)[0]
-        for subnetwork in result["subnetworks"]:
+        for subnetwork in result.get("subnetworks", []):
             if region in subnetwork:
                 return subnetwork
         raise errors.NoSubnetwork("No subnetwork for network %s in region %s" %
