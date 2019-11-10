@@ -25,6 +25,7 @@ from acloud.internal.lib import android_build_client
 from acloud.internal.lib import auth
 from acloud.internal.lib import driver_test_lib
 from acloud.internal.lib import utils
+from acloud.list import list as list_instances
 
 
 # pylint: disable=invalid-name,protected-access
@@ -40,6 +41,8 @@ class AvdSpecTest(driver_test_lib.BaseDriverTest):
         self.args.config_file = ""
         self.args.build_target = "fake_build_target"
         self.args.adb_port = None
+        self.Patch(list_instances, "ChooseOneRemoteInstance", return_value=mock.MagicMock())
+        self.Patch(list_instances, "GetInstancesFromInstanceNames", return_value=mock.MagicMock())
         self.AvdSpec = avd_spec.AVDSpec(self.args)
 
     # pylint: disable=protected-access
@@ -75,6 +78,26 @@ class AvdSpecTest(driver_test_lib.BaseDriverTest):
         self.AvdSpec._ProcessLocalImageArgs(self.args)
         self.assertEqual(self.AvdSpec._local_image_dir, "test_environ")
         self.assertEqual(self.AvdSpec.local_image_artifact, expected_image_artifact)
+
+        # Specified --avd-type=goldfish --local-image with a dir
+        self.Patch(utils, "GetBuildEnvironmentVariable",
+                   return_value="test_environ")
+        self.Patch(os.path, "isdir", return_value=True)
+        self.args.local_image = "/path-to-image-dir"
+        self.AvdSpec._avd_type = constants.TYPE_GF
+        self.AvdSpec._instance_type = constants.INSTANCE_TYPE_LOCAL
+        self.AvdSpec._ProcessLocalImageArgs(self.args)
+        self.assertEqual(self.AvdSpec._local_image_dir, expected_image_dir)
+
+        # Specified --avd-type=goldfish --local_image without arg
+        self.Patch(utils, "GetBuildEnvironmentVariable",
+                   return_value="test_environ")
+        self.Patch(os.path, "isdir", return_value=True)
+        self.args.local_image = None
+        self.AvdSpec._avd_type = constants.TYPE_GF
+        self.AvdSpec._instance_type = constants.INSTANCE_TYPE_LOCAL
+        self.AvdSpec._ProcessLocalImageArgs(self.args)
+        self.assertEqual(self.AvdSpec._local_image_dir, "test_environ")
 
     def testProcessImageArgs(self):
         """Test process image source."""
@@ -174,6 +197,7 @@ class AvdSpecTest(driver_test_lib.BaseDriverTest):
         # Checking wrong resolution.
         args = mock.MagicMock()
         args.hw_property = "cpu:3,resolution:1280"
+        args.reuse_instance_name = None
         with self.assertRaises(errors.InvalidHWPropertyError):
             self.AvdSpec._ProcessHWPropertyArgs(args)
 

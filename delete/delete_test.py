@@ -32,7 +32,7 @@ class DeleteTest(driver_test_lib.BaseDriverTest):
     def testGetStopcvd(self, mock_subprocess, mock_path_exist):
         """Test _GetStopCvd."""
         mock_subprocess.side_effect = ["fack_id",
-                                       "/tmp/bin/launch_cvd --daemon --cpus 2"]
+                                       "/tmp/bin/run_cvd"]
         expected_value = "/tmp/bin/stop_cvd"
         self.assertEqual(expected_value, delete._GetStopCvd())
 
@@ -42,7 +42,7 @@ class DeleteTest(driver_test_lib.BaseDriverTest):
         """Test DeleteLocalInstance."""
         mock_subprocess.return_value = True
         delete_report = delete.DeleteLocalInstance()
-        self.assertEquals(delete_report.data, {
+        self.assertEqual(delete_report.data, {
             "deleted": [
                 {
                     "type": "instance",
@@ -50,8 +50,8 @@ class DeleteTest(driver_test_lib.BaseDriverTest):
                 },
             ],
         })
-        self.assertEquals(delete_report.command, "delete")
-        self.assertEquals(delete_report.status, "SUCCESS")
+        self.assertEqual(delete_report.command, "delete")
+        self.assertEqual(delete_report.status, "SUCCESS")
 
     # pylint: disable=protected-access, no-member
     def testCleanupSSVncviwer(self):
