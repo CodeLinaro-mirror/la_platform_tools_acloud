@@ -42,6 +42,7 @@ Available commands:
 * [delete](#delete)
 * [reconnect](#reconnect)
 * [setup](#setup)
+* [pull](#pull)
 
 #### **create**
 
@@ -104,6 +105,10 @@ properties of the AVD. You can specify the cpu, resolution, dpi, memory,and/or
 disk in a key:value format like so:
 `cpu:2,resolution:1280x700,dpi:160,memory:2g,disk:2g`
 
+* `--reuse-gce`: 'cuttlefish only' This can help users use their own instance.
+Reusing specific gce instance if `--reuse-gce` [instance-name] is provided.
+Select one gce instance to reuse if `--reuse-gce` is provided.
+
 The full list of options are available via `--help`
 
 > $ acloud create --help
@@ -165,6 +170,27 @@ Cheatsheet:
 * Reconnect a specific instance
 
 > $ acloud reconnect --instance-names [instance-name]
+
+
+### **pull**
+
+Pull will provide all log files to download or show in screen. It is helpful
+to debug about AVD boot up fail or AVD has abnromal behaviors.
+
+Cheatsheet:
+
+* Pull logs from a sole instance or prompt user to choose one to pull if where
+are more than one active instances.
+
+> $ acloud pull
+
+* Pull logs from the specific instance.
+
+> $ acloud pull --instance-name "instance-name"
+
+* Pull a specific log file from a specific instance
+
+> $ acloud pull --instance-name "instance-name" --file-name "file-name"
 
 
 #### **setup**
