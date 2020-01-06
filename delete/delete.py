@@ -22,13 +22,15 @@ from __future__ import print_function
 import logging
 import os
 import re
-import shutil
 import subprocess
 
 from acloud import errors
 from acloud.internal import constants
+from acloud.internal.lib import auth
 from acloud.internal.lib import adb_tools
+from acloud.internal.lib import cvd_compute_client_multi_stage
 from acloud.internal.lib import utils
+from acloud.internal.lib import ssh as ssh_object
 from acloud.list import list as list_instances
 from acloud.public import config
 from acloud.public import device_driver
@@ -218,9 +220,46 @@ def DeleteLocalGoldfishInstance(instance, delete_report):
         delete_report.AddError("Cannot kill %s." % instance.device_serial)
         delete_report.SetStatus(report.Status.FAIL)
 
-    shutil.rmtree(instance.instance_dir, ignore_errors=True)
+    instance.DeleteCreationTimestamp(ignore_errors=True)
     return delete_report
 
+
+def CleanUpRemoteHost(cfg, remote_host, host_user,
+                      host_ssh_private_key_path=None):
+    """Clean up the remote host.
+
+    Args:
+        cfg: An AcloudConfig instance.
+        remote_host : String, ip address or host name of the remote host.
+        host_user: String of user login into the instance.
+        host_ssh_private_key_path: String of host key for logging in to the
+                                   host.
+
+    Returns:
+        A Report instance.
+    """
+    delete_report = report.Report(command="delete")
+    credentials = auth.CreateCredentials(cfg)
+    compute_client = cvd_compute_client_multi_stage.CvdComputeClient(
+        acloud_config=cfg,
+        oauth2_credentials=credentials)
+    ssh = ssh_object.Ssh(
+        ip=ssh_object.IP(ip=remote_host),
+        user=host_user,
+        ssh_private_key_path=(
+            host_ssh_private_key_path or cfg.ssh_private_key_path))
+    try:
+        compute_client.InitRemoteHost(ssh, remote_host, host_user)
+        delete_report.SetStatus(report.Status.SUCCESS)
+        device_driver.AddDeletionResultToReport(
+            delete_report, [remote_host], failed=[],
+            error_msgs=[],
+            resource_name="remote host")
+    except subprocess.CalledProcessError as e:
+        delete_report.AddError(str(e))
+        delete_report.SetStatus(report.Status.FAIL)
+
+    return delete_report
 
 def Run(args):
     """Run delete.
@@ -234,6 +273,10 @@ def Run(args):
     Returns:
         A Report instance.
     """
+    if args.remote_host:
+        cfg = config.GetAcloudConfig(args)
+        return CleanUpRemoteHost(cfg, args.remote_host, args.host_user,
+                                 args.host_ssh_private_key_path)
     instances = list_instances.GetLocalInstances()
     if args.local_only:
         cfg = None

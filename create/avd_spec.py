@@ -134,6 +134,8 @@ class AVDSpec(object):
 
         # The maximum time in seconds used to wait for the AVD to boot.
         self._boot_timeout_secs = None
+        # The maximum time in seconds used to wait for the instance ready.
+        self._ins_timeout_secs = None
 
         # The local instance id
         self._local_instance_id = None
@@ -301,6 +303,7 @@ class AVDSpec(object):
         self._password = args.password
 
         self._boot_timeout_secs = args.boot_timeout_secs
+        self._ins_timeout_secs = args.ins_timeout_secs
 
         if args.reuse_gce:
             if args.reuse_gce != constants.SELECT_ONE_GCE_INSTANCE:
@@ -636,8 +639,24 @@ class AVDSpec(object):
 
     @property
     def autoconnect(self):
-        """Return autoconnect."""
-        return self._autoconnect
+        """autoconnect.
+
+        args.autoconnect could pass in type of Boolean or String.
+
+        Return: Boolean, True only if self._autoconnect is not False.
+        """
+        return self._autoconnect is not False
+
+    @property
+    def connect_vnc(self):
+        """launch vnc.
+
+        args.autoconnect could pass in type of Boolean or String.
+        if args.autoconnect is "adb" or False, no need to launch vnc.
+
+        Return: Boolean, True only if self._autoconnect is True.
+        """
+        return self._autoconnect is True
 
     @property
     def unlock_screen(self):
@@ -718,6 +737,11 @@ class AVDSpec(object):
     def boot_timeout_secs(self):
         """Return boot_timeout_secs."""
         return self._boot_timeout_secs
+
+    @property
+    def ins_timeout_secs(self):
+        """Return ins_timeout_secs."""
+        return self._ins_timeout_secs
 
     @property
     def system_build_info(self):

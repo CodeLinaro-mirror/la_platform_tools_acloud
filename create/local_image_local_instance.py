@@ -34,12 +34,12 @@ To delete the local instance, we will call stop_cvd with the environment variabl
 [CUTTLEFISH_CONFIG_FILE] which is pointing to the runtime cuttlefish json.
 """
 
-from __future__ import print_function
 import json
 import logging
 import os
 import shutil
 import subprocess
+import threading
 import sys
 
 from acloud import errors
@@ -66,7 +66,7 @@ _CONFIRM_RELAUNCH = ("\nCuttlefish AVD[id:%d] is already running. \n"
 _ENV_ANDROID_HOST_OUT = "ANDROID_HOST_OUT"
 _ENV_CVD_HOME = "HOME"
 _ENV_CUTTLEFISH_INSTANCE = "CUTTLEFISH_INSTANCE"
-_LAUNCH_CVD_TIMEOUT_SECS = 60  # default timeout as 60 seconds
+_LAUNCH_CVD_TIMEOUT_SECS = 120  # default timeout as 120 seconds
 _LAUNCH_CVD_TIMEOUT_ERROR = ("Cuttlefish AVD launch timeout, did not complete "
                              "within %d secs.")
 _VIRTUAL_DISK_PATHS = "virtual_disk_paths"
@@ -120,7 +120,7 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
             value={constants.ADB_PORT: local_ports.adb_port,
                    constants.VNC_PORT: local_ports.vnc_port})
         # Launch vnc client if we're auto-connecting.
-        if avd_spec.autoconnect:
+        if avd_spec.connect_vnc:
             utils.LaunchVNCFromReport(result_report, avd_spec, no_prompts)
         if avd_spec.unlock_screen:
             AdbTools(local_ports.adb_port).AutoUnlockScreen()
@@ -222,9 +222,7 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
                     utils.TextColors.FAIL)
                 sys.exit(constants.EXIT_BY_USER)
 
-        timeout_exception = utils.TimeoutException(timeout_secs,
-                                                   _LAUNCH_CVD_TIMEOUT_ERROR % timeout_secs)
-        timeout_exception(self._LaunchCvd)(cmd, local_instance_id)
+        self._LaunchCvd(cmd, local_instance_id, timeout=timeout_secs)
 
     @staticmethod
     def _StopCvd(host_bins_path, local_instance_id):
@@ -258,7 +256,7 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
 
     @staticmethod
     @utils.TimeExecute(function_description="Waiting for AVD(s) to boot up")
-    def _LaunchCvd(cmd, local_instance_id):
+    def _LaunchCvd(cmd, local_instance_id, timeout=None):
         """Execute Launch CVD.
 
         Kick off the launch_cvd command and log the output.
@@ -266,6 +264,7 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
         Args:
             cmd: String, launch_cvd command.
             local_instance_id: Integer of instance id.
+            timeout: Integer, the number of seconds to wait for the AVD to boot up.
 
         Raises:
             errors.LaunchCVDFail when any CalledProcessError.
@@ -280,16 +279,21 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
         cvd_env = os.environ.copy()
         cvd_env[_ENV_CVD_HOME] = cvd_home_dir
         cvd_env[_ENV_CUTTLEFISH_INSTANCE] = str(local_instance_id)
-        try:
-            # Check the result of launch_cvd command.
-            # An exit code of 0 is equivalent to VIRTUAL_DEVICE_BOOT_COMPLETED
-            logger.debug(subprocess.check_output(cmd, shell=True,
-                                                 stderr=subprocess.STDOUT,
-                                                 env=cvd_env))
-        except subprocess.CalledProcessError as error:
-            raise errors.LaunchCVDFail(
-                "Can't launch cuttlefish AVD.%s. \nFor more detail: "
-                "%s/launcher.log" % (str(error), cvd_runtime_dir))
+        # Check the result of launch_cvd command.
+        # An exit code of 0 is equivalent to VIRTUAL_DEVICE_BOOT_COMPLETED
+        process = subprocess.Popen(cmd, shell=True, stderr=subprocess.STDOUT,
+                                   env=cvd_env)
+        if timeout:
+            timer = threading.Timer(timeout, process.kill)
+            timer.start()
+        process.wait()
+        if timeout:
+            timer.cancel()
+        if process.returncode == 0:
+            return
+        raise errors.LaunchCVDFail(
+            "Can't launch cuttlefish AVD. Return code:%s. \nFor more detail: "
+            "%s/launcher.log" % (str(process.returncode), cvd_runtime_dir))
 
     @staticmethod
     def PrintDisclaimer():
