@@ -51,13 +51,17 @@ def AddCommonCreateArgs(parser):
              "when a device fails on boot.")
     parser.add_argument(
         "--autoconnect",
-        action="store_true",
+        type=str,
+        nargs="?",
+        const=True,
         dest="autoconnect",
         required=False,
+        choices=[True, "adb"],
         help="For each remote instance, automatically create 2 ssh tunnels "
              "forwarding both adb & vnc, and then add the device to adb. "
              "For local cuttlefish instance, create a vnc connection. "
-             "For local goldfish instance, create a window.")
+             "For local goldfish instance, create a window."
+             "If need adb only, you can pass in 'adb' here.")
     parser.add_argument(
         "--no-autoconnect",
         action="store_false",
@@ -99,6 +103,13 @@ def AddCommonCreateArgs(parser):
         type=int,
         required=False,
         help="The maximum time in seconds used to wait for the AVD to boot.")
+    parser.add_argument(
+        "--wait-for-ins-stable",
+        dest="ins_timeout_secs",
+        type=int,
+        required=False,
+        help="The maximum time in seconds used to wait for the instance boot "
+             "up. The default value to wait for instance up time is 300 secs.")
     parser.add_argument(
         "--build-target",
         type=str,
@@ -163,12 +174,14 @@ def AddCommonCreateArgs(parser):
         help="'cuttlefish only' System image build target, specify if different "
         "from --build-target",
         required=False)
+    # TODO(146314062): Remove --multi-stage-launch after infra don't use this
+    # args.
     parser.add_argument(
         "--multi-stage-launch",
         dest="multi_stage_launch",
         action='store_true',
         required=False,
-        default=None,
+        default=True,
         help="Enable the multi-stage cuttlefish launch.")
     parser.add_argument(
         "--no-multi-stage-launch",
@@ -328,14 +341,16 @@ def GetCreateArgParser(subparser):
         type=str,
         dest="remote_host",
         default=None,
-        help="'cuttlefish only' Provide host name for launch AVD on this "
-        "devices.")
+        help="'cuttlefish only' Provide host name to clean up the remote host. "
+        "For example: '--host 1.1.1.1'")
     create_parser.add_argument(
         "--host-user",
         type=str,
         dest="host_user",
-        default=None,
-        help="'remote host only' Provide host user for login on this host.")
+        default=constants.GCE_USER,
+        help="'remote host only' Provide host user for logging in to the host. "
+        "The default value is vsoc-01. For example: '--host 1.1.1.1 --host-user "
+        "vsoc-02'")
     create_parser.add_argument(
         "--host-ssh-private-key-path",
         type=str,
