@@ -141,7 +141,7 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
         self.StopCvd()
         self.CleanUp()
 
-    # pylint: disable=arguments-differ,too-many-locals
+    # pylint: disable=arguments-differ,too-many-locals,broad-except
     def CreateInstance(self, instance, image_name, image_project,
                        build_target=None, branch=None, build_id=None,
                        kernel_branch=None, kernel_build_id=None,
@@ -219,7 +219,7 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
                            boot_timeout_secs=self._boot_timeout_secs)
 
             return instance
-        except errors.DriverError as e:
+        except Exception as e:
             self._all_failures[instance] = e
             return instance
 
@@ -366,7 +366,8 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
                          % (instance, boot_timeout_secs))
             self._all_failures[instance] = error_msg
             utils.PrintColorString(str(e), utils.TextColors.FAIL)
-            self._PullAllLogFiles(instance)
+            if avd_spec and not avd_spec.no_pull_log:
+                self._PullAllLogFiles(instance)
 
         self._execution_time[_LAUNCH_CVD] = round(time.time() - timestart, 2)
         return {instance: error_msg} if error_msg else {}

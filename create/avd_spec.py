@@ -111,8 +111,10 @@ class AVDSpec(object):
         self._local_image_dir = None
         self._local_image_artifact = None
         self._local_system_image_dir = None
+        self._local_tool_dirs = None
         self._image_download_dir = None
         self._num_of_instances = None
+        self._no_pull_log = None
         self._remote_image = None
         self._system_build_info = None
         self._kernel_build_info = None
@@ -294,7 +296,9 @@ class AVDSpec(object):
         self._host_user = args.host_user
         self._host_ssh_private_key_path = args.host_ssh_private_key_path
         self._local_instance_id = args.local_instance
+        self._local_tool_dirs = args.local_tool
         self._num_of_instances = args.num
+        self._no_pull_log = args.no_pull_log
         self._serial_log_file = args.serial_log_file
         self._emulator_build_id = args.emulator_build_id
         self._gpu = args.gpu
@@ -633,6 +637,11 @@ class AVDSpec(object):
         return self._local_system_image_dir
 
     @property
+    def local_tool_dirs(self):
+        """Return a list of local tool directories."""
+        return self._local_tool_dirs
+
+    @property
     def avd_type(self):
         """Return the avd type."""
         return self._avd_type
@@ -641,7 +650,7 @@ class AVDSpec(object):
     def autoconnect(self):
         """autoconnect.
 
-        args.autoconnect could pass in type of Boolean or String.
+        args.autoconnect could pass as Boolean or String.
 
         Return: Boolean, True only if self._autoconnect is not False.
         """
@@ -651,12 +660,9 @@ class AVDSpec(object):
     def connect_vnc(self):
         """launch vnc.
 
-        args.autoconnect could pass in type of Boolean or String.
-        if args.autoconnect is "adb" or False, no need to launch vnc.
-
-        Return: Boolean, True only if self._autoconnect is True.
+        Return: Boolean, True if self._autoconnect is 'vnc'.
         """
-        return self._autoconnect is True
+        return self._autoconnect == constants.INS_KEY_VNC
 
     @property
     def unlock_screen(self):
@@ -772,3 +778,8 @@ class AVDSpec(object):
     def host_ssh_private_key_path(self):
         """Return host_ssh_private_key_path."""
         return self._host_ssh_private_key_path
+
+    @property
+    def no_pull_log(self):
+        """Return no_pull_log."""
+        return self._no_pull_log
