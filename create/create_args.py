@@ -53,10 +53,10 @@ def AddCommonCreateArgs(parser):
         "--autoconnect",
         type=str,
         nargs="?",
-        const=True,
+        const=constants.INS_KEY_VNC,
         dest="autoconnect",
         required=False,
-        choices=[True, "adb"],
+        choices=[constants.INS_KEY_VNC, constants.INS_KEY_ADB],
         help="For each remote instance, automatically create 2 ssh tunnels "
              "forwarding both adb & vnc, and then add the device to adb. "
              "For local cuttlefish instance, create a vnc connection. "
@@ -69,7 +69,7 @@ def AddCommonCreateArgs(parser):
         required=False,
         help="Will not automatically create ssh tunnels forwarding adb & vnc "
              "when instance created.")
-    parser.set_defaults(autoconnect=True)
+    parser.set_defaults(autoconnect=constants.INS_KEY_VNC)
     parser.add_argument(
         "--unlock",
         action="store_true",
@@ -179,17 +179,24 @@ def AddCommonCreateArgs(parser):
     parser.add_argument(
         "--multi-stage-launch",
         dest="multi_stage_launch",
-        action='store_true',
+        action="store_true",
         required=False,
         default=True,
         help="Enable the multi-stage cuttlefish launch.")
     parser.add_argument(
         "--no-multi-stage-launch",
         dest="multi_stage_launch",
-        action='store_false',
+        action="store_false",
         required=False,
         default=None,
         help="Disable the multi-stage cuttlefish launch.")
+    parser.add_argument(
+        "--no-pull-log",
+        dest="no_pull_log",
+        action="store_true",
+        required=False,
+        default=None,
+        help="Disable auto download logs when AVD booting up failed.")
 
     # TODO(b/118439885): Old arg formats to support transition, delete when
     # transistion is done.
@@ -312,6 +319,16 @@ def GetCreateArgParser(subparser):
         help="Use the locally built system images for the AVD. Look for the "
         "images in $ANDROID_PRODUCT_OUT if no args value is provided. "
         "e.g., --local-system-image or --local-system-image /path/to/dir")
+    create_parser.add_argument(
+        "--local-tool",
+        type=str,
+        dest="local_tool",
+        action="append",
+        default=[],
+        required=False,
+        help="Use the tools in the specified directory to create local "
+        "instances. The directory structure follows $ANDROID_HOST_OUT or "
+        "$ANDROID_EMULATOR_PREBUILTS.")
     create_parser.add_argument(
         "--image-download-dir",
         type=str,
@@ -445,6 +462,11 @@ def _VerifyLocalArgs(args):
                                                 "less than 1. Actually passed:%d"
                                                 % args.local_instance)
 
+    for tool_dir in args.local_tool:
+        if not os.path.exists(tool_dir):
+            raise errors.CheckPathError(
+                "Specified path doesn't exist: %s" % tool_dir)
+
 
 def _VerifyHostArgs(args):
     """Verify args starting with --host.
@@ -464,7 +486,7 @@ def _VerifyHostArgs(args):
         raise errors.UnsupportedCreateArgs(
             "--num is not supported for remote host.")
 
-    if args.host_user and args.remote_host is None:
+    if args.host_user != constants.GCE_USER and args.remote_host is None:
         raise errors.UnsupportedCreateArgs(
             "--host-user only support for remote host.")
 
