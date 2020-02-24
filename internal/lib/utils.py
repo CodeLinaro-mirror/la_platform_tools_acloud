@@ -100,6 +100,7 @@ _EvaluatedResult = collections.namedtuple("EvaluatedResult",
 # dict of supported system and their distributions.
 _SUPPORTED_SYSTEMS_AND_DISTS = {"Linux": ["Ubuntu", "Debian"]}
 _DEFAULT_TIMEOUT_ERR = "Function did not complete within %d secs."
+_SSVNC_VIEWER_PATTERN = "vnc://127.0.0.1:%(vnc_port)d"
 
 
 class TempDir(object):
@@ -917,14 +918,22 @@ def LaunchBrowserFromReport(report):
     Args:
         report: Report object, that stores and generates report.
     """
+    PrintColorString("(This is an experimental project for webrtc, and since "
+                     "the certificate is self-signed, Chrome will mark it as "
+                     "an insecure website. keep going.)",
+                     TextColors.WARNING)
+
     for device in report.data.get("devices", []):
         if device.get("ip"):
-            PrintColorString("(This is an experimental project for webrtc, and "
-                             "since the certificate is self-signed, Chrome will "
-                             "mark it as an insecure website. keep going.)",
-                             TextColors.WARNING)
-            webbrowser.open_new_tab("%s%s:%s" % (
-                _WEBRTC_URL, device.get("ip"), _WEBRTC_PORT))
+            webrtc_link = "%s%s:%s" % (_WEBRTC_URL, device.get("ip"),
+                                       _WEBRTC_PORT)
+            if os.environ.get(_ENV_DISPLAY, None):
+                webbrowser.open_new_tab(webrtc_link)
+            else:
+                PrintColorString("Remote terminal can't support launch webbrowser.",
+                                 TextColors.FAIL)
+                PrintColorString("Open %s to remotely control AVD on the "
+                                 "browser." % webrtc_link)
         else:
             PrintColorString("Auto-launch devices webrtc in browser failed!",
                              TextColors.FAIL)
@@ -1251,3 +1260,13 @@ def GetDictItems(namedtuple_object):
     """
     return (namedtuple_object.__dict__.items() if six.PY2
             else namedtuple_object._asdict().items())
+
+
+def CleanupSSVncviewer(vnc_port):
+    """Cleanup the old disconnected ssvnc viewer.
+
+    Args:
+        vnc_port: Integer, port number of vnc.
+    """
+    ssvnc_viewer_pattern = _SSVNC_VIEWER_PATTERN % {"vnc_port":vnc_port}
+    CleanupProcess(ssvnc_viewer_pattern)
