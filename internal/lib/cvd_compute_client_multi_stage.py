@@ -37,6 +37,7 @@ Android build, and start Android within the host instance.
 
 import logging
 import os
+import ssl
 import stat
 import subprocess
 import tempfile
@@ -56,6 +57,9 @@ logger = logging.getLogger(__name__)
 
 _DECOMPRESS_KERNEL_ARG = "-decompress_kernel=true"
 _GPU_ARG = "-gpu_mode=drm_virgl"
+_AGREEMENT_PROMPT_ARGS = ["-undefok=report_anonymous_usage_stats",
+                          "-report_anonymous_usage_stats=y"]
+_NUM_AVDS_ARG = "-num_instances=%(num_AVD)s"
 _DEFAULT_BRANCH = "aosp-master"
 _FETCHER_BUILD_TARGET = "aosp_cf_x86_phone-userdebug"
 _FETCHER_NAME = "fetch_cvd"
@@ -68,7 +72,9 @@ _GUEST_ENFORCE_SECURITY_FALSE = "--guest_enforce_security=false"
 _START_WEBRTC = "--start_webrtc"
 _VM_MANAGER = "--vm_manager=crosvm"
 _WEBRTC_ARGS = [_GUEST_ENFORCE_SECURITY_FALSE, _START_WEBRTC, _VM_MANAGER]
-_WEBRTC_PUBLIC_IP = "--webrtc_public_ip=%s"
+_NO_RETRY = 0
+_MAX_RETRY = 3
+_RETRY_SLEEP_SECS = 3
 
 
 def _ProcessBuild(build_id=None, branch=None, build_target=None):
@@ -198,6 +204,7 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
         if avd_spec and avd_spec.instance_name_to_reuse:
             self._ip = self._ReusingGceInstance(avd_spec)
         else:
+            self._VerifyZoneByQuota()
             self._ip = self._CreateGceInstance(instance, image_name, image_project,
                                                extra_scopes, boot_disk_size_gb,
                                                avd_spec)
@@ -247,7 +254,7 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
             String, args of launch_cvd.
         """
         launch_cvd_args = []
-        if blank_data_disk_size_gb > 0:
+        if blank_data_disk_size_gb and blank_data_disk_size_gb > 0:
             # Policy 'create_if_missing' would create a blank userdata disk if
             # missing. If already exist, reuse the disk.
             launch_cvd_args.append(
@@ -274,8 +281,10 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
                 launch_cvd_args.append(
                     "-memory_mb=%s" % avd_spec.hw_property[constants.HW_ALIAS_MEMORY])
             if avd_spec.connect_webrtc:
-                launch_cvd_args.append(_WEBRTC_PUBLIC_IP % self._ip.external)
                 launch_cvd_args.extend(_WEBRTC_ARGS)
+            if avd_spec.num_avds_per_instance > 1:
+                launch_cvd_args.append(
+                    _NUM_AVDS_ARG % {"num_AVD": avd_spec.num_avds_per_instance})
         else:
             resolution = self._resolution.split("x")
             launch_cvd_args.append("-x_res=" + resolution[0])
@@ -294,6 +303,7 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
         if self._gpu:
             launch_cvd_args.append(_GPU_ARG)
 
+        launch_cvd_args.extend(_AGREEMENT_PROMPT_ARGS)
         return launch_cvd_args
 
     @staticmethod
@@ -371,10 +381,10 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
                                                  blank_data_disk_size_gb,
                                                  kernel_build,
                                                  decompress_kernel)
-        boot_timeout_secs = boot_timeout_secs or self.BOOT_TIMEOUT_SECS
+        boot_timeout_secs = boot_timeout_secs or constants.DEFAULT_CF_BOOT_TIMEOUT
         ssh_command = "./bin/launch_cvd -daemon " + " ".join(launch_cvd_args)
         try:
-            self._ssh.Run(ssh_command, boot_timeout_secs)
+            self._ssh.Run(ssh_command, boot_timeout_secs, retry=_NO_RETRY)
         except (subprocess.CalledProcessError, errors.DeviceConnectionError) as e:
             # TODO(b/140475060): Distinguish the error is command return error
             # or timeout error.
@@ -398,8 +408,9 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
             instance: String, instance name.
         """
         log_files = pull.GetAllLogFilePaths(self._ssh)
-        download_folder = pull.GetDownloadLogFolder(instance)
-        pull.PullLogs(self._ssh, log_files, download_folder)
+        error_log_folder = pull.GetDownloadLogFolder(instance)
+        pull.PullLogs(self._ssh, log_files, error_log_folder)
+        self.ExtendReportData(constants.ERROR_LOG_FOLDER, error_log_folder)
 
     @utils.TimeExecute(function_description="Reusing GCE instance")
     def _ReusingGceInstance(self, avd_spec):
@@ -483,7 +494,12 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
         # stronger automated testing on it.
         download_dir = tempfile.mkdtemp()
         download_target = os.path.join(download_dir, _FETCHER_NAME)
-        self._build_api.DownloadArtifact(
+        utils.RetryExceptionType(
+            exception_types=ssl.SSLError,
+            max_retries=_MAX_RETRY,
+            functor=self._build_api.DownloadArtifact,
+            sleep_multiplier=_RETRY_SLEEP_SECS,
+            retry_backoff_factor=utils.DEFAULT_RETRY_BACKOFF_FACTOR,
             build_target=_FETCHER_BUILD_TARGET,
             build_id=self._fetch_cvd_version,
             resource_id=_FETCHER_NAME,
@@ -519,7 +535,8 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
         if kernel_build:
             fetch_cvd_args.append("-kernel_build=" + kernel_build)
 
-        self._ssh.Run("./fetch_cvd " + " ".join(fetch_cvd_args))
+        self._ssh.Run("./fetch_cvd " + " ".join(fetch_cvd_args),
+                      timeout=constants.DEFAULT_SSH_TIMEOUT)
         self._execution_time[_FETCH_ARTIFACT] = round(time.time() - timestart, 2)
 
     def GetInstanceIP(self, instance=None):
@@ -538,6 +555,33 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
             return self._ip
         return gcompute_client.ComputeClient.GetInstanceIP(
             self, instance=instance, zone=self._zone)
+
+    def GetHostImageName(self, stable_image_name, image_family, image_project):
+        """Get host image name.
+
+        Args:
+            stable_image_name: String of stable host image name.
+            image_family: String of image family.
+            image_project: String of image project.
+
+        Returns:
+            String of stable host image name.
+
+        Raises:
+            errors.ConfigError: There is no host image name in config file.
+        """
+        if stable_image_name:
+            return stable_image_name
+
+        if image_family:
+            image_name = gcompute_client.ComputeClient.GetImageFromFamily(
+                self, image_family, image_project)["name"]
+            logger.debug("Get the host image name from image family: %s", image_name)
+            return image_name
+
+        raise errors.ConfigError(
+            "Please specify 'stable_host_image_name' or 'stable_host_image_family'"
+            " in config.")
 
     @property
     def all_failures(self):

@@ -30,7 +30,7 @@ LOGCAT_SERIAL_PORT = 2
 
 # Remote image parameters
 BUILD_TARGET = "build_target"
-BUILD_BRANCH = "build_branch"
+BUILD_BRANCH = "branch"
 BUILD_ID = "build_id"
 
 # AVD types
@@ -38,6 +38,7 @@ TYPE_CHEEPS = "cheeps"
 TYPE_CF = "cuttlefish"
 TYPE_GCE = "gce"
 TYPE_GF = "goldfish"
+TYPE_FVP = "fvp"
 
 # Image types
 IMAGE_SRC_REMOTE = "remote_image"
@@ -56,6 +57,15 @@ AVD_TYPES_MAPPING = {
 INSTANCE_TYPE_REMOTE = "remote"
 INSTANCE_TYPE_LOCAL = "local"
 INSTANCE_TYPE_HOST = "host"
+
+# CF_AVD_BUILD_TARGET_MAPPING
+CF_X86_PATTERN = "cf_x86"
+CF_ARM_PATTERN = "cf_arm"
+CF_AVD_BUILD_TARGET_PATTERN_MAPPING = {
+    INSTANCE_TYPE_REMOTE: CF_X86_PATTERN,
+    INSTANCE_TYPE_LOCAL: CF_X86_PATTERN,
+    INSTANCE_TYPE_HOST: CF_ARM_PATTERN,
+}
 
 # Flavor types
 FLAVOR_PHONE = "phone"
@@ -111,6 +121,8 @@ GCE_VNC_PORT = 6444
 # For goldfish remote instances
 GF_ADB_PORT = 5555
 GF_VNC_PORT = 6444
+# For FVP remote instances (no VNC support)
+FVP_ADB_PORT = 5555
 
 COMMAND_PS = ["ps", "aux"]
 CMD_LAUNCH_CVD = "launch_cvd"
@@ -130,6 +142,9 @@ LOCALHOST_ADB_SERIAL = LOCALHOST + ":%d"
 SSH_BIN = "ssh"
 SCP_BIN = "scp"
 ADB_BIN = "adb"
+# Default timeout, the unit is seconds.
+DEFAULT_SSH_TIMEOUT = 300
+DEFAULT_CF_BOOT_TIMEOUT = 450
 
 LABEL_CREATE_BY = "created_by"
 
@@ -166,3 +181,16 @@ EXIT_BY_ERROR = -99
 
 # For reuse gce instance
 SELECT_ONE_GCE_INSTANCE = "select_one_gce_instance"
+
+# Webrtc
+WEBRTC_LOCAL_PORT = 8443
+WEBRTC_LOCAL_HOST = "localhost"
+
+# Remote Log
+REMOTE_LOG_FOLDER = "/home/%s/cuttlefish_runtime" % GCE_USER
+
+# Cheeps specific stuff.
+CHEEPS_BETTY_IMAGE = "betty_image"
+
+# Key name in report
+ERROR_LOG_FOLDER = "error_log_folder"

@@ -70,8 +70,10 @@ Try $acloud [cmd] --help for further details.
 from __future__ import print_function
 import argparse
 import logging
+import os
 import platform
 import sys
+import sysconfig
 import traceback
 
 # TODO: Remove this once we switch over to embedded launcher.
@@ -93,6 +95,12 @@ if (sys.version_info.major == 2
         print("  - or -")
         print("  POSIXLY_CORRECT=1 port -N install python27")
     sys.exit(1)
+# This is a workaround to put '/usr/lib/python3.X' ahead of googleapiclient of
+# build system path list to fix python3 issue of http.client(b/144743252)
+# that googleapiclient existed http.py conflict with python3 build-in lib.
+# Using embedded_launcher(b/135639220) perhaps work whereas it didn't solve yet.
+if sys.version_info.major == 3:
+    sys.path.insert(0, os.path.dirname(sysconfig.get_paths()['purelib']))
 
 # By Default silence root logger's stream handler since 3p lib may initial
 # root logger no matter what level we're using. The acloud logger behavior will
@@ -127,11 +135,19 @@ from acloud.setup import setup_args
 
 LOGGING_FMT = "%(asctime)s |%(levelname)s| %(module)s:%(lineno)s| %(message)s"
 ACLOUD_LOGGER = "acloud"
+_LOGGER = logging.getLogger(ACLOUD_LOGGER)
 NO_ERROR_MESSAGE = ""
+PROG = "acloud"
 
 # Commands
 CMD_CREATE_CUTTLEFISH = "create_cf"
 CMD_CREATE_GOLDFISH = "create_gf"
+
+# show contact info to user.
+_CONTACT_INFO = ("If you have any question or need acloud team support, "
+                 "please feel free to contact us by email at "
+                 "buganizer-system+419709@google.com")
+_LOG_INFO = " and attach those log files from %s"
 
 
 # pylint: disable=too-many-statements
@@ -156,6 +172,9 @@ def _ParseArgs(args):
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         usage="acloud {" + usage + "} ...")
+    parser = argparse.ArgumentParser(prog=PROG)
+    parser.add_argument('--version', action='version', version=(
+        '%(prog)s ' + config.GetVersion()))
     subparsers = parser.add_subparsers(metavar="{" + usage + "}")
     subparser_list = []
 
@@ -247,6 +266,8 @@ def _VerifyArgs(parsed_args):
     """
     if parsed_args.which == create_args.CMD_CREATE:
         create_args.VerifyArgs(parsed_args)
+    if parsed_args.which == setup_args.CMD_SETUP:
+        setup_args.VerifyArgs(parsed_args)
     if parsed_args.which == CMD_CREATE_CUTTLEFISH:
         if not parsed_args.build_id and not parsed_args.branch:
             raise errors.CommandArgError(
@@ -346,6 +367,7 @@ def main(argv=None):
     args = _ParseArgs(argv)
     _SetupLogging(args.log_file, args.verbose)
     _VerifyArgs(args)
+    _LOGGER.info("Acloud version: %s", config.GetVersion())
 
     cfg = config.GetAcloudConfig(args)
     # TODO: Move this check into the functions it is actually needed.
@@ -390,7 +412,8 @@ def main(argv=None):
             serial_log_file=args.serial_log_file,
             autoconnect=args.autoconnect,
             tags=args.tags,
-            report_internal_ip=args.report_internal_ip)
+            report_internal_ip=args.report_internal_ip,
+            boot_timeout_secs=args.boot_timeout_secs)
     elif args.which == delete_args.CMD_DELETE:
         report = delete.Run(args)
     elif args.which == list_args.CMD_LIST:
@@ -410,7 +433,11 @@ def main(argv=None):
         report.Dump(args.report_file)
     if report and report.errors:
         error_msg = "\n".join(report.errors)
-        sys.stderr.write("Encountered the following errors:\n%s\n" % error_msg)
+        help_msg = _CONTACT_INFO
+        if report.data.get(constants.ERROR_LOG_FOLDER):
+            help_msg += _LOG_INFO % report.data.get(constants.ERROR_LOG_FOLDER)
+        sys.stderr.write("Encountered the following errors:\n%s\n\n%s.\n" %
+                         (error_msg, help_msg))
         return constants.EXIT_BY_FAIL_REPORT, error_msg
     return constants.EXIT_SUCCESS, NO_ERROR_MESSAGE
 

@@ -48,6 +48,7 @@ from acloud.setup import host_setup_runner
 
 _MAKE_CMD = "build/soong/soong_ui.bash"
 _MAKE_ARG = "--make-mode"
+_YES = "y"
 
 _CREATOR_CLASS_DICT = {
     # GCE types
@@ -76,6 +77,9 @@ _CREATOR_CLASS_DICT = {
         goldfish_remote_image_remote_instance.GoldfishRemoteImageRemoteInstance,
     (constants.TYPE_GF, constants.IMAGE_SRC_LOCAL, constants.INSTANCE_TYPE_LOCAL):
         goldfish_local_image_local_instance.GoldfishLocalImageLocalInstance,
+    # FVP types
+    (constants.TYPE_FVP, constants.IMAGE_SRC_LOCAL, constants.INSTANCE_TYPE_REMOTE):
+        local_image_remote_instance.LocalImageRemoteInstance,
 }
 
 
@@ -119,7 +123,7 @@ def _CheckForAutoconnect(args):
         return
 
     disable_autoconnect = False
-    answer = utils.InteractWithQuestion(
+    answer = _YES if args.no_prompt else utils.InteractWithQuestion(
         "adb is required for autoconnect, without it autoconnect will be "
         "disabled, would you like acloud to build it[y/N]? ")
     if answer in constants.USER_ANSWER_YES:
@@ -166,6 +170,7 @@ def _CheckForSetup(args):
     args.host = False
     args.host_base = False
     args.force = False
+    args.update_config = None
     # Remote image/instance requires the GCP config setup.
     if not args.local_instance or args.local_image == "":
         gcp_setup = gcp_setup_runner.GcpTaskRunner(args.config_file)

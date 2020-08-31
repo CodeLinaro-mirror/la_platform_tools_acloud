@@ -25,6 +25,7 @@ from acloud.internal import constants
 from acloud.internal.lib import utils
 
 
+_DEFAULT_GPU = "default"
 CMD_CREATE = "create"
 
 
@@ -205,10 +206,28 @@ def AddCommonCreateArgs(parser):
     parser.add_argument(
         "--gpu",
         type=str,
+        const=_DEFAULT_GPU,
+        nargs="?",
         dest="gpu",
         required=False,
         default=None,
-        help="GPU accelerator to use if any. e.g. nvidia-tesla-k80.")
+        help="GPU accelerator to use if any. e.g. nvidia-tesla-k80. For local "
+             "instances, this arg without assigning any value is to enable "
+             "local gpu support.")
+    # Hide following args for users, it is only used in infra.
+    parser.add_argument(
+        "--num-avds-per-instance",
+        type=int,
+        dest="num_avds_per_instance",
+        required=False,
+        default=1,
+        help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--zone",
+        type=str,
+        dest="zone",
+        required=False,
+        help=argparse.SUPPRESS)
 
     # TODO(b/118439885): Old arg formats to support transition, delete when
     # transistion is done.
@@ -303,7 +322,8 @@ def GetCreateArgParser(subparser):
         type=str,
         dest="avd_type",
         default=constants.TYPE_CF,
-        choices=[constants.TYPE_GCE, constants.TYPE_CF, constants.TYPE_GF, constants.TYPE_CHEEPS],
+        choices=[constants.TYPE_GCE, constants.TYPE_CF, constants.TYPE_GF, constants.TYPE_CHEEPS,
+                 constants.TYPE_FVP],
         help="Android Virtual Device type (default %s)." % constants.TYPE_CF)
     create_parser.add_argument(
         "--flavor",
@@ -447,6 +467,15 @@ def GetCreateArgParser(subparser):
         required=False,
         default=None,
         help="'cheeps only' password to log in to Chrome OS with.")
+    create_parser.add_argument(
+        "--betty-image",
+        type=str,
+        dest="cheeps_betty_image",
+        required=False,
+        default=None,
+        help=("'cheeps only' The L1 betty version to use. Only makes sense "
+              "when launching a controller image with "
+              "stable-cheeps-host-image"))
 
     AddCommonCreateArgs(create_parser)
     return create_parser
@@ -556,6 +585,11 @@ def VerifyArgs(args):
         raise errors.UnsupportedCreateArgs(
             "--num is not supported for local instance.")
 
+    if args.local_instance is None and args.gpu == _DEFAULT_GPU:
+        raise errors.UnsupportedCreateArgs(
+            "Please assign one gpu model for GCE instance. Reference: "
+            "https://cloud.google.com/compute/docs/gpus")
+
     if args.adb_port:
         utils.CheckPortFree(args.adb_port)
 
@@ -566,13 +600,15 @@ def VerifyArgs(args):
                 "[%s] is an invalid hw property, supported values are:%s. "
                 % (key, constants.HW_PROPERTIES))
 
-    if args.avd_type != constants.TYPE_CHEEPS and (
-            args.stable_cheeps_host_image_name or
-            args.stable_cheeps_host_image_project or
-            args.username or args.password):
+    cheeps_only_flags = [args.stable_cheeps_host_image_name,
+                         args.stable_cheeps_host_image_project,
+                         args.username,
+                         args.password,
+                         args.cheeps_betty_image]
+    if args.avd_type != constants.TYPE_CHEEPS and any(cheeps_only_flags):
         raise errors.UnsupportedCreateArgs(
-            "--stable-cheeps-*, --username and --password are only valid with "
-            "avd_type == %s" % constants.TYPE_CHEEPS)
+            "--stable-cheeps-*, --betty-image, --username and --password are "
+            "only valid with avd_type == %s" % constants.TYPE_CHEEPS)
     if (args.username or args.password) and not (args.username and args.password):
         raise ValueError("--username and --password must both be set")
     if not args.autoconnect and args.unlock_screen:
