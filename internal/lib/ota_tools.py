@@ -19,6 +19,9 @@ import stat
 import subprocess
 import tempfile
 
+from six import b
+
+
 from acloud import errors
 from acloud.internal import constants
 from acloud.internal.lib import utils
@@ -69,7 +72,7 @@ def FindOtaTools(search_paths):
                                 {"tool_name": "OTA tool directory"})
 
 
-class OtaTools(object):
+class OtaTools:
     """The class that executes OTA tool commands."""
 
     def __init__(self, ota_tools_dir):
@@ -116,6 +119,14 @@ class OtaTools(object):
             popen_args["stdin"] = subprocess.PIPE
             popen_args["stdout"] = subprocess.PIPE
             popen_args["stderr"] = subprocess.PIPE
+
+            # Some OTA tools are Python scripts in different versions. The
+            # PYTHONPATH for acloud may be incompatible with the tools.
+            if "env" not in popen_args and "PYTHONPATH" in os.environ:
+                popen_env = os.environ.copy()
+                del popen_env["PYTHONPATH"]
+                popen_args["env"] = popen_env
+
             proc = subprocess.Popen(command, **popen_args)
             stdout, stderr = proc.communicate()
             logger.info("%s stdout: %s", command[0], stdout)
@@ -164,18 +175,18 @@ class OtaTools(object):
             if split_line[0] == "dynamic_partition_list":
                 partition_names = split_line[1].split()
             elif split_line[0] == "lpmake":
-                output_file.write("lpmake=%s\n" % lpmake_path)
+                output_file.write(b("lpmake=%s\n" % lpmake_path))
                 continue
             elif split_line[0].endswith("_image"):
                 continue
-            output_file.write(line)
+            output_file.write(b(line))
 
         if not partition_names:
             logger.w("No dynamic partition list in misc info.")
 
         for partition_name in partition_names:
-            output_file.write("%s_image=%s\n" %
-                              (partition_name, get_image(partition_name)))
+            output_file.write(b("%s_image=%s\n" %
+                                (partition_name, get_image(partition_name))))
 
     @utils.TimeExecute(function_description="Build super image")
     @utils.TimeoutException(_BUILD_SUPER_IMAGE_TIMEOUT_SECS)
@@ -196,8 +207,8 @@ class OtaTools(object):
         try:
             with open(misc_info_path, "r") as misc_info:
                 with tempfile.NamedTemporaryFile(
-                    prefix="misc_info_", suffix=".txt",
-                    delete=False) as new_misc_info:
+                        prefix="misc_info_", suffix=".txt",
+                        delete=False) as new_misc_info:
                     new_misc_info_path = new_misc_info.name
                     self._RewriteMiscInfo(new_misc_info, misc_info, lpmake,
                                           get_image)
@@ -246,11 +257,11 @@ class OtaTools(object):
         for line in input_file:
             split_line = line.split()
             if len(split_line) == 3:
-                output_file.write("%s %s %s\n" % (get_image(split_line[1]),
-                                                  split_line[1],
-                                                  split_line[2]))
+                output_file.write(b("%s %s %s\n" % (get_image(split_line[1]),
+                                                    split_line[1],
+                                                    split_line[2])))
             else:
-                output_file.write(line)
+                output_file.write(b(line))
 
     @utils.TimeExecute(function_description="Make combined image")
     @utils.TimeoutException(_MK_COMBINED_IMG_TIMEOUT_SECS)
@@ -272,8 +283,8 @@ class OtaTools(object):
         try:
             with open(system_qemu_config_path, "r") as config:
                 with tempfile.NamedTemporaryFile(
-                    prefix="system-qemu-config_", suffix=".txt",
-                    delete=False) as new_config:
+                        prefix="system-qemu-config_", suffix=".txt",
+                        delete=False) as new_config:
                     new_config_path = new_config.name
                     self._RewriteSystemQemuConfig(new_config, config,
                                                   get_image)

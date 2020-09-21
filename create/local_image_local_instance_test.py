@@ -35,12 +35,22 @@ class LocalImageLocalInstanceTest(driver_test_lib.BaseDriverTest):
 
     LAUNCH_CVD_CMD_WITH_DISK = """sg group1 <<EOF
 sg group2
-launch_cvd -daemon -cpus fake -x_res fake -y_res fake -dpi fake -memory_mb fake -run_adb_connector=true -system_image_dir fake_image_dir -instance_dir fake_cvd_dir -blank_data_image_mb fake -data_policy always_create
+launch_cvd -daemon -cpus fake -x_res fake -y_res fake -dpi fake -memory_mb fake -run_adb_connector=true -system_image_dir fake_image_dir -instance_dir fake_cvd_dir -undefok=report_anonymous_usage_stats,enable_sandbox -report_anonymous_usage_stats=y -enable_sandbox=false -blank_data_image_mb fake -data_policy always_create
 EOF"""
 
     LAUNCH_CVD_CMD_NO_DISK = """sg group1 <<EOF
 sg group2
-launch_cvd -daemon -cpus fake -x_res fake -y_res fake -dpi fake -memory_mb fake -run_adb_connector=true -system_image_dir fake_image_dir -instance_dir fake_cvd_dir
+launch_cvd -daemon -cpus fake -x_res fake -y_res fake -dpi fake -memory_mb fake -run_adb_connector=true -system_image_dir fake_image_dir -instance_dir fake_cvd_dir -undefok=report_anonymous_usage_stats,enable_sandbox -report_anonymous_usage_stats=y -enable_sandbox=false
+EOF"""
+
+    LAUNCH_CVD_CMD_NO_DISK_WITH_GPU = """sg group1 <<EOF
+sg group2
+launch_cvd -daemon -cpus fake -x_res fake -y_res fake -dpi fake -memory_mb fake -run_adb_connector=true -system_image_dir fake_image_dir -instance_dir fake_cvd_dir -undefok=report_anonymous_usage_stats,enable_sandbox -report_anonymous_usage_stats=y -enable_sandbox=false -gpu_mode=drm_virgl
+EOF"""
+
+    LAUNCH_CVD_CMD_WITH_WEBRTC = """sg group1 <<EOF
+sg group2
+launch_cvd -daemon -cpus fake -x_res fake -y_res fake -dpi fake -memory_mb fake -run_adb_connector=true -system_image_dir fake_image_dir -instance_dir fake_cvd_dir -undefok=report_anonymous_usage_stats,enable_sandbox -report_anonymous_usage_stats=y -enable_sandbox=false -guest_enforce_security=false -vm_manager=crosvm -start_webrtc=true -webrtc_public_ip=127.0.0.1
 EOF"""
 
     _EXPECTED_DEVICES_IN_REPORT = [
@@ -146,16 +156,27 @@ EOF"""
 
         launch_cmd = self.local_image_local_instance.PrepareLaunchCVDCmd(
             constants.CMD_LAUNCH_CVD, hw_property, True, "fake_image_dir",
-            "fake_cvd_dir")
+            "fake_cvd_dir", False, None)
         self.assertEqual(launch_cmd, self.LAUNCH_CVD_CMD_WITH_DISK)
 
         # "disk" doesn't exist in hw_property.
         hw_property = {"cpu": "fake", "x_res": "fake", "y_res": "fake",
-                       "dpi":"fake", "memory": "fake"}
+                       "dpi": "fake", "memory": "fake"}
         launch_cmd = self.local_image_local_instance.PrepareLaunchCVDCmd(
             constants.CMD_LAUNCH_CVD, hw_property, True, "fake_image_dir",
-            "fake_cvd_dir")
+            "fake_cvd_dir", False, None)
         self.assertEqual(launch_cmd, self.LAUNCH_CVD_CMD_NO_DISK)
+
+        # "gpu" is enabled with "default"
+        launch_cmd = self.local_image_local_instance.PrepareLaunchCVDCmd(
+            constants.CMD_LAUNCH_CVD, hw_property, True, "fake_image_dir",
+            "fake_cvd_dir", False, "default")
+        self.assertEqual(launch_cmd, self.LAUNCH_CVD_CMD_NO_DISK_WITH_GPU)
+
+        launch_cmd = self.local_image_local_instance.PrepareLaunchCVDCmd(
+            constants.CMD_LAUNCH_CVD, hw_property, True, "fake_image_dir",
+            "fake_cvd_dir", True, None)
+        self.assertEqual(launch_cmd, self.LAUNCH_CVD_CMD_WITH_WEBRTC)
 
     @mock.patch.object(local_image_local_instance.LocalImageLocalInstance,
                        "_LaunchCvd")
@@ -198,7 +219,7 @@ EOF"""
                                                        local_instance_id,
                                                        local_image_path)
         mock_launch_cvd.assert_called_once_with(
-            "fake_launch_cvd", 3, timeout=local_image_local_instance._LAUNCH_CVD_TIMEOUT_SECS)
+            "fake_launch_cvd", 3, timeout=constants.DEFAULT_CF_BOOT_TIMEOUT)
 
     # pylint: disable=protected-access
     @mock.patch.dict("os.environ", clear=True)

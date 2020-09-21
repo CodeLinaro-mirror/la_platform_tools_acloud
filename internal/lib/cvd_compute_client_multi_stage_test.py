@@ -84,6 +84,8 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
         """Set up the test."""
         super(CvdComputeClientTest, self).setUp()
         self.Patch(cvd_compute_client_multi_stage.CvdComputeClient, "InitResourceHandle")
+        self.Patch(cvd_compute_client_multi_stage.CvdComputeClient, "_VerifyZoneByQuota",
+                   return_value=True)
         self.Patch(android_build_client.AndroidBuildClient, "InitResourceHandle")
         self.Patch(android_build_client.AndroidBuildClient, "DownloadArtifact")
         self.Patch(list_instances, "GetInstancesFromInstanceNames", return_value=mock.MagicMock())
@@ -100,23 +102,28 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
         self.args.flavor = "phone"
         self.args.adb_port = None
         self.args.hw_property = "cpu:2,resolution:1080x1920,dpi:240,memory:4g"
+        self.args.num_avds_per_instance = 2
+        self.args.remote_host = False
 
     # pylint: disable=protected-access
-    @mock.patch.object(utils, "GetBuildEnvironmentVariable", return_value="fake_env")
+    @mock.patch.object(utils, "GetBuildEnvironmentVariable", return_value="fake_env_cf_x86")
     @mock.patch.object(glob, "glob", return_value=["fake.img"])
     def testGetLaunchCvdArgs(self, _mock_check_img, _mock_env):
         """test GetLaunchCvdArgs."""
         # test GetLaunchCvdArgs with avd_spec
         fake_avd_spec = avd_spec.AVDSpec(self.args)
-        expeted_args = ['-x_res=1080', '-y_res=1920', '-dpi=240', '-cpus=2',
-                        '-memory_mb=4096', '--setupwizard_mode=REQUIRED',
-                        '-gpu_mode=drm_virgl']
+        expeted_args = ["-x_res=1080", "-y_res=1920", "-dpi=240", "-cpus=2",
+                        "-memory_mb=4096", "-num_instances=2", "--setupwizard_mode=REQUIRED",
+                        "-gpu_mode=drm_virgl", "-undefok=report_anonymous_usage_stats",
+                        "-report_anonymous_usage_stats=y"]
         launch_cvd_args = self.cvd_compute_client_multi_stage._GetLaunchCvdArgs(fake_avd_spec)
         self.assertEqual(launch_cvd_args, expeted_args)
 
         # test GetLaunchCvdArgs without avd_spec
-        expeted_args = ['-x_res=720', '-y_res=1280', '-dpi=160',
-                        '--setupwizard_mode=REQUIRED', '-gpu_mode=drm_virgl']
+        expeted_args = ["-x_res=720", "-y_res=1280", "-dpi=160",
+                        "--setupwizard_mode=REQUIRED", "-gpu_mode=drm_virgl",
+                        "-undefok=report_anonymous_usage_stats",
+                        "-report_anonymous_usage_stats=y"]
         launch_cvd_args = self.cvd_compute_client_multi_stage._GetLaunchCvdArgs(
             avd_spec=None)
         self.assertEqual(launch_cvd_args, expeted_args)
@@ -132,7 +139,7 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
         self.assertEqual(_ProcessBuild(build_id="123", branch=None, build_target=None), "123")
         self.assertEqual(_ProcessBuild(build_id=None, branch=None, build_target=None), None)
 
-    @mock.patch.object(utils, "GetBuildEnvironmentVariable", return_value="fake_env")
+    @mock.patch.object(utils, "GetBuildEnvironmentVariable", return_value="fake_env_cf_x86")
     @mock.patch.object(glob, "glob", return_value=["fake.img"])
     @mock.patch.object(gcompute_client.ComputeClient, "CompareMachineSize",
                        return_value=1)
@@ -157,7 +164,7 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
 
         created_subprocess = mock.MagicMock()
         created_subprocess.stdout = mock.MagicMock()
-        created_subprocess.stdout.readline = mock.MagicMock(return_value='')
+        created_subprocess.stdout.readline = mock.MagicMock(return_value=b"")
         created_subprocess.poll = mock.MagicMock(return_value=0)
         created_subprocess.returncode = 0
         created_subprocess.communicate = mock.MagicMock(return_value=('', ''))

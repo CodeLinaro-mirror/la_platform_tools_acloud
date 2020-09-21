@@ -15,7 +15,6 @@
 # pylint: disable=too-many-lines
 from __future__ import print_function
 
-from distutils.spawn import find_executable
 import base64
 import binascii
 import collections
@@ -57,11 +56,18 @@ GET_BUILD_VAR_CMD = ["build/soong/soong_ui.bash", "--dumpvar-mode"]
 DEFAULT_RETRY_BACKOFF_FACTOR = 1
 DEFAULT_SLEEP_MULTIPLIER = 0
 
-_SSH_TUNNEL_ARGS = ("-i %(rsa_key_file)s -o UserKnownHostsFile=/dev/null "
-                    "-o StrictHostKeyChecking=no "
-                    "-L %(vnc_port)d:127.0.0.1:%(target_vnc_port)d "
-                    "-L %(adb_port)d:127.0.0.1:%(target_adb_port)d "
-                    "-N -f -l %(ssh_user)s %(ip_addr)s")
+_SSH_TUNNEL_ARGS = (
+    "-i %(rsa_key_file)s -o UserKnownHostsFile=/dev/null "
+    "-o StrictHostKeyChecking=no "
+    "%(port_mapping)s"
+    "-N -f -l %(ssh_user)s %(ip_addr)s")
+PORT_MAPPING = "-L %(local_port)d:127.0.0.1:%(target_port)d "
+_RELEASE_PORT_CMD = "kill $(lsof -t -i :%d)"
+_WEBRTC_TARGET_PORT = 8443
+WEBRTC_PORTS_MAPPING = [{"local": constants.WEBRTC_LOCAL_PORT,
+                         "target": _WEBRTC_TARGET_PORT},
+                        {"local": 15550, "target": 15550},
+                        {"local": 15551, "target": 15551}]
 _ADB_CONNECT_ARGS = "connect 127.0.0.1:%(adb_port)d"
 # Store the ports that vnc/adb are forwarded to, both are integers.
 ForwardedPorts = collections.namedtuple("ForwardedPorts", [constants.VNC_PORT,
@@ -74,7 +80,8 @@ AVD_PORT_DICT = {
     constants.TYPE_GF: ForwardedPorts(constants.GF_VNC_PORT,
                                       constants.GF_ADB_PORT),
     constants.TYPE_CHEEPS: ForwardedPorts(constants.CHEEPS_VNC_PORT,
-                                          constants.CHEEPS_ADB_PORT)
+                                          constants.CHEEPS_ADB_PORT),
+    constants.TYPE_FVP: ForwardedPorts(None, constants.FVP_ADB_PORT),
 }
 
 _VNC_BIN = "ssvnc"
@@ -88,8 +95,7 @@ _DEFAULT_DISPLAY_SCALE = 1.0
 _DIST_DIR = "DIST_DIR"
 
 # For webrtc
-_WEBRTC_URL = "https://"
-_WEBRTC_PORT = "8443"
+_WEBRTC_URL = "https://%(webrtc_ip)s:%(webrtc_port)d/?use_tcp=true"
 
 _CONFIRM_CONTINUE = ("In order to display the screen to the AVD, we'll need to "
                      "install a vnc client (ssvnc). \nWould you like acloud to "
@@ -98,7 +104,7 @@ _CONFIRM_CONTINUE = ("In order to display the screen to the AVD, we'll need to "
 _EvaluatedResult = collections.namedtuple("EvaluatedResult",
                                           ["is_result_ok", "result_message"])
 # dict of supported system and their distributions.
-_SUPPORTED_SYSTEMS_AND_DISTS = {"Linux": ["Ubuntu", "Debian"]}
+_SUPPORTED_SYSTEMS_AND_DISTS = {"Linux": ["Ubuntu", "ubuntu", "Debian", "debian"]}
 _DEFAULT_TIMEOUT_ERR = "Function did not complete within %d secs."
 _SSVNC_VIEWER_PATTERN = "vnc://127.0.0.1:%(vnc_port)d"
 
@@ -349,7 +355,7 @@ def CreateSshKeyPairIfNotExist(private_key_path, public_key_path):
         if private_key_exist:
             cmd = SSH_KEYGEN_PUB_CMD + ["-f", private_key_path]
             with open(public_key_path, 'w') as outfile:
-                stream_content = subprocess.check_output(cmd)
+                stream_content = CheckOutput(cmd)
                 outfile.write(
                     stream_content.rstrip('\n') + " " + getpass.getuser())
             logger.info(
@@ -407,7 +413,7 @@ def VerifyRsaPubKey(rsa):
 
     key_type, data, _ = elements
     try:
-        binary_data = base64.decodestring(data)
+        binary_data = base64.decodestring(six.b(data))
         # number of bytes of int type
         int_length = 4
         # binary_data is like "7ssh-key..." in a binary format.
@@ -417,7 +423,7 @@ def VerifyRsaPubKey(rsa):
         # We will verify that the rsa conforms to this format.
         # ">I" in the following line means "big-endian unsigned integer".
         type_length = struct.unpack(">I", binary_data[:int_length])[0]
-        if binary_data[int_length:int_length + type_length] != key_type:
+        if binary_data[int_length:int_length + type_length] != six.b(key_type):
             raise errors.DriverError("rsa key is invalid: %s" % rsa)
     except (struct.error, binascii.Error) as e:
         raise errors.DriverError(
@@ -802,6 +808,55 @@ def _ExecuteCommand(cmd, args):
         subprocess.check_call(command, stderr=dev_null, stdout=dev_null)
 
 
+def ReleasePort(port):
+    """Release local port.
+
+    Args:
+        port: Integer of local port number.
+    """
+    try:
+        with open(os.devnull, "w") as dev_null:
+            subprocess.check_call(_RELEASE_PORT_CMD % port,
+                                  stderr=dev_null, stdout=dev_null, shell=True)
+    except subprocess.CalledProcessError:
+        logger.debug("The port %d is available.", constants.WEBRTC_LOCAL_PORT)
+
+
+def EstablishWebRTCSshTunnel(ip_addr, rsa_key_file, ssh_user,
+                             extra_args_ssh_tunnel=None):
+    """Create ssh tunnels for webrtc.
+
+    # TODO(151418177): Before fully supporting webrtc feature, we establish one
+    # WebRTC tunnel at a time. so always delete the previous connection before
+    # establishing new one.
+
+    Args:
+        ip_addr: String, use to build the adb & vnc tunnel between local
+                 and remote instance.
+        rsa_key_file: String, Private key file path to use when creating
+                      the ssh tunnels.
+        ssh_user: String of user login into the instance.
+        extra_args_ssh_tunnel: String, extra args for ssh tunnel connection.
+    """
+    ReleasePort(constants.WEBRTC_LOCAL_PORT)
+    try:
+        port_mapping = [PORT_MAPPING % {
+            "local_port":port["local"],
+            "target_port":port["target"]} for port in WEBRTC_PORTS_MAPPING]
+        ssh_tunnel_args = _SSH_TUNNEL_ARGS % {
+            "rsa_key_file": rsa_key_file,
+            "ssh_user": ssh_user,
+            "ip_addr": ip_addr,
+            "port_mapping":" ".join(port_mapping)}
+        ssh_tunnel_args_list = shlex.split(ssh_tunnel_args)
+        if extra_args_ssh_tunnel != None:
+            ssh_tunnel_args_list.extend(shlex.split(extra_args_ssh_tunnel))
+        _ExecuteCommand(constants.SSH_BIN, ssh_tunnel_args_list)
+    except subprocess.CalledProcessError as e:
+        PrintColorString("\n%s\nFailed to create ssh tunnels, retry with '#acloud "
+                         "reconnect'." % e, TextColors.FAIL)
+
+
 # TODO(147337696): create ssh tunnels tear down as adb and vnc.
 # pylint: disable=too-many-locals
 def AutoConnect(ip_addr, rsa_key_file, target_vnc_port, target_adb_port,
@@ -823,19 +878,24 @@ def AutoConnect(ip_addr, rsa_key_file, target_vnc_port, target_adb_port,
         NamedTuple of (vnc_port, adb_port) SSHTUNNEL of the connect, both are
         integers.
     """
-    local_free_vnc_port = PickFreePort()
     local_adb_port = client_adb_port or PickFreePort()
+    port_mapping = [PORT_MAPPING % {
+            "local_port":local_adb_port,
+            "target_port":target_adb_port}]
+    local_free_vnc_port = None
+    if target_vnc_port:
+        local_free_vnc_port = PickFreePort()
+        port_mapping += [PORT_MAPPING % {
+                "local_port":local_free_vnc_port,
+                "target_port":target_vnc_port}]
     try:
         ssh_tunnel_args = _SSH_TUNNEL_ARGS % {
             "rsa_key_file": rsa_key_file,
-            "vnc_port": local_free_vnc_port,
-            "adb_port": local_adb_port,
-            "target_vnc_port": target_vnc_port,
-            "target_adb_port": target_adb_port,
+            "port_mapping": " ".join(port_mapping),
             "ssh_user": ssh_user,
             "ip_addr": ip_addr}
         ssh_tunnel_args_list = shlex.split(ssh_tunnel_args)
-        if extra_args_ssh_tunnel:
+        if extra_args_ssh_tunnel != None:
             ssh_tunnel_args_list.extend(shlex.split(extra_args_ssh_tunnel))
         _ExecuteCommand(constants.SSH_BIN, ssh_tunnel_args_list)
     except subprocess.CalledProcessError as e:
@@ -912,6 +972,7 @@ def LaunchVNCFromReport(report, avd_spec, no_prompts=False):
             PrintColorString("No VNC port specified, skipping VNC startup.",
                              TextColors.FAIL)
 
+
 def LaunchBrowserFromReport(report):
     """Open browser when autoconnect to webrtc according to the instances report.
 
@@ -925,18 +986,27 @@ def LaunchBrowserFromReport(report):
 
     for device in report.data.get("devices", []):
         if device.get("ip"):
-            webrtc_link = "%s%s:%s" % (_WEBRTC_URL, device.get("ip"),
-                                       _WEBRTC_PORT)
-            if os.environ.get(_ENV_DISPLAY, None):
-                webbrowser.open_new_tab(webrtc_link)
-            else:
-                PrintColorString("Remote terminal can't support launch webbrowser.",
-                                 TextColors.FAIL)
-                PrintColorString("Open %s to remotely control AVD on the "
-                                 "browser." % webrtc_link)
-        else:
-            PrintColorString("Auto-launch devices webrtc in browser failed!",
-                             TextColors.FAIL)
+            LaunchBrowser(constants.WEBRTC_LOCAL_HOST,
+                          constants.WEBRTC_LOCAL_PORT)
+
+
+def LaunchBrowser(ip_addr, port):
+    """Launch browser to connect the webrtc AVD.
+
+    Args:
+        ip_addr: String, use to connect to webrtc AVD on the instance.
+        port: Integer, port number.
+    """
+    webrtc_link = _WEBRTC_URL % {
+        "webrtc_ip": ip_addr,
+        "webrtc_port": port}
+    if os.environ.get(_ENV_DISPLAY, None):
+        webbrowser.open_new_tab(webrtc_link)
+    else:
+        PrintColorString("Remote terminal can't support launch webbrowser.",
+                         TextColors.FAIL)
+        PrintColorString("WebRTC AVD URL: %s "% webrtc_link)
+
 
 def LaunchVncClient(port, avd_width=None, avd_height=None, no_prompts=False):
     """Launch ssvnc.
@@ -951,7 +1021,9 @@ def LaunchVncClient(port, avd_width=None, avd_height=None, no_prompts=False):
         os.environ[_ENV_DISPLAY]
     except KeyError:
         PrintColorString("Remote terminal can't support VNC. "
-                         "Skipping VNC startup.", TextColors.FAIL)
+                         "Skipping VNC startup. "
+                         "VNC server is listening at 127.0.0.1:{}.".format(port),
+                         TextColors.FAIL)
         return
 
     if IsSupportedPlatform() and not FindExecutable(_VNC_BIN):
@@ -959,7 +1031,7 @@ def LaunchVncClient(port, avd_width=None, avd_height=None, no_prompts=False):
             try:
                 PrintColorString("Installing ssvnc vnc client... ", end="")
                 sys.stdout.flush()
-                subprocess.check_output(_CMD_INSTALL_SSVNC, shell=True)
+                CheckOutput(_CMD_INSTALL_SSVNC, shell=True)
                 PrintColorString("Done", TextColors.OKGREEN)
             except subprocess.CalledProcessError as cpe:
                 PrintColorString("Failed to install ssvnc: %s" %
@@ -1026,7 +1098,13 @@ def CalculateVNCScreenRatio(avd_width, avd_height):
         import Tkinter
     # Some python interpreters may not be configured for Tk, just return default scale ratio.
     except ImportError:
-        return _DEFAULT_DISPLAY_SCALE
+        try:
+            import tkinter as Tkinter
+        except ImportError:
+            PrintColorString(
+                "no module named tkinter, vnc display scale were not be fit."
+                "please run 'sudo apt-get install python3-tk' to install it.")
+            return _DEFAULT_DISPLAY_SCALE
     root = Tkinter.Tk()
     margin = 100 # leave some space on user's monitor.
     screen_height = root.winfo_screenheight() - margin
@@ -1129,6 +1207,9 @@ def CheckUserInGroups(group_name_list):
 def IsSupportedPlatform(print_warning=False):
     """Check if user's os is the supported platform.
 
+    platform.version() return such as '#1 SMP Debian 5.6.14-1rodete2...'
+    and use to judge supported or not.
+
     Args:
         print_warning: Boolean, print the unsupported warning
                        if True.
@@ -1136,17 +1217,19 @@ def IsSupportedPlatform(print_warning=False):
         Boolean, True if user is using supported platform.
     """
     system = platform.system()
-    # TODO(b/143197659): linux_distribution() deprecated in python 3. To fix it
-    # try to use another package "import distro".
-    dist = platform.linux_distribution()[0]
-    platform_supported = (system in _SUPPORTED_SYSTEMS_AND_DISTS and
-                          dist in _SUPPORTED_SYSTEMS_AND_DISTS[system])
+    # TODO(b/161085678): After python3 fully migrated, then use distro to fix.
+    platform_supported = False
+    if system in _SUPPORTED_SYSTEMS_AND_DISTS:
+        for dist in _SUPPORTED_SYSTEMS_AND_DISTS[system]:
+            if dist in platform.version():
+                platform_supported = True
+                break
 
-    logger.info("supported system and dists: %s",
+    logger.info("Updated supported system and dists: %s",
                 _SUPPORTED_SYSTEMS_AND_DISTS)
     platform_supported_msg = ("%s[%s] %s supported platform" %
                               (system,
-                               dist,
+                               platform.version(),
                                "is a" if platform_supported else "is not a"))
     if print_warning and not platform_supported:
         PrintColorString(platform_supported_msg, TextColors.WARNING)
@@ -1164,7 +1247,7 @@ def GetDistDir():
     dist_cmd = GET_BUILD_VAR_CMD[:]
     dist_cmd.append(_DIST_DIR)
     try:
-        dist_dir = subprocess.check_output(dist_cmd, cwd=android_build_top)
+        dist_dir = CheckOutput(dist_cmd, cwd=android_build_top)
     except subprocess.CalledProcessError:
         return None
     return os.path.join(android_build_top, dist_dir.strip())
@@ -1245,7 +1328,11 @@ def FindExecutable(filename):
     Returns:
         String: execution file path.
     """
-    return find_executable(filename) if six.PY2 else shutil.which(filename)
+    try:
+        from distutils.spawn import find_executable
+        return find_executable(filename)
+    except ImportError:
+        return shutil.which(filename)
 
 
 def GetDictItems(namedtuple_object):
@@ -1270,3 +1357,19 @@ def CleanupSSVncviewer(vnc_port):
     """
     ssvnc_viewer_pattern = _SSVNC_VIEWER_PATTERN % {"vnc_port":vnc_port}
     CleanupProcess(ssvnc_viewer_pattern)
+
+
+def CheckOutput(cmd, **kwargs):
+    """Call subprocess.check_output to get output.
+
+    The subprocess.check_output return type is "bytes" in python 3, we have
+    to convert bytes as string with .decode() in advance.
+
+    Args:
+        cmd: String of command.
+        **kwargs: dictionary of keyword based args to pass to func.
+
+    Return:
+        String to command output.
+    """
+    return subprocess.check_output(cmd, **kwargs).decode()

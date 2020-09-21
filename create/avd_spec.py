@@ -90,7 +90,7 @@ def EscapeAnsi(line):
 
 
 # pylint: disable=too-many-public-methods
-class AVDSpec:
+class AVDSpec():
     """Class to store data on the type of AVD to create."""
 
     def __init__(self, args):
@@ -116,6 +116,7 @@ class AVDSpec:
         self._local_tool_dirs = None
         self._image_download_dir = None
         self._num_of_instances = None
+        self._num_avds_per_instance = None
         self._no_pull_log = None
         self._remote_image = None
         self._system_build_info = None
@@ -268,7 +269,7 @@ class AVDSpec:
         Args:
             args: Namespace object from argparse.parse_args.
         """
-        self._cfg.OverrideHwPropertyWithFlavor(self._flavor)
+        self._cfg.OverrideHwProperty(self._flavor, self._instance_type)
         self._hw_property = {}
         self._hw_property = self._ParseHWPropertyStr(self._cfg.hw_property)
         logger.debug("Default hw property for [%s] flavor: %s", self._flavor,
@@ -302,6 +303,7 @@ class AVDSpec:
         self._local_instance_id = args.local_instance
         self._local_tool_dirs = args.local_tool
         self._num_of_instances = args.num
+        self._num_avds_per_instance = args.num_avds_per_instance
         self._no_pull_log = args.no_pull_log
         self._serial_log_file = args.serial_log_file
         self._emulator_build_id = args.emulator_build_id
@@ -358,6 +360,8 @@ class AVDSpec:
         """
         if self._avd_type == constants.TYPE_CF:
             self._ProcessCFLocalImageArgs(args.local_image, args.flavor)
+        elif self._avd_type == constants.TYPE_FVP:
+            self._ProcessFVPLocalImageArgs(args.local_image)
         elif self._avd_type == constants.TYPE_GF:
             self._local_image_dir = self._ProcessGFLocalImageArgs(
                 args.local_image)
@@ -449,8 +453,12 @@ class AVDSpec:
 
         """
         flavor_from_build_string = None
-        local_image_path = local_image_arg or utils.GetBuildEnvironmentVariable(
-            _ENV_ANDROID_PRODUCT_OUT)
+        if not local_image_arg:
+            self._CheckCFBuildTarget(self._instance_type)
+            local_image_path = utils.GetBuildEnvironmentVariable(
+                _ENV_ANDROID_PRODUCT_OUT)
+        else:
+            local_image_path = local_image_arg
 
         if os.path.isfile(local_image_path):
             self._local_image_artifact = local_image_arg
@@ -479,6 +487,30 @@ class AVDSpec:
 
         if flavor_from_build_string and not flavor_arg:
             self._flavor = flavor_from_build_string
+
+    def _ProcessFVPLocalImageArgs(self, local_image_arg):
+        """Get local built image path for FVP-type AVD.
+
+        Args:
+            local_image_arg: String of local image args.
+        """
+        build_target = utils.GetBuildEnvironmentVariable(
+            constants.ENV_BUILD_TARGET)
+        if build_target != "fvp":
+            utils.PrintColorString(
+                "%s is not an fvp target (Try lunching fvp-eng "
+                "and running 'm')" % build_target,
+                utils.TextColors.WARNING)
+        self._local_image_dir = utils.GetBuildEnvironmentVariable(
+            _ENV_ANDROID_PRODUCT_OUT)
+
+        # Since dir is provided, so checking that any images exist to ensure
+        # user didn't forget to 'make' before launch AVD.
+        image_list = glob.glob(os.path.join(self.local_image_dir, "*.img"))
+        if not image_list:
+            raise errors.GetLocalImageError(
+                "No image found(Did you choose a lunch target and run `m`?)"
+                ": %s.\n " % self._local_image_dir)
 
     def _ProcessRemoteBuildArgs(self, args):
         """Get the remote build args.
@@ -519,6 +551,9 @@ class AVDSpec:
                 self._remote_image[constants.BUILD_TARGET],
                 self._remote_image[constants.BUILD_BRANCH])
 
+        self._remote_image[constants.CHEEPS_BETTY_IMAGE] = (
+            args.cheeps_betty_image)
+
         # Process system image and kernel image.
         self._system_build_info = {constants.BUILD_ID: args.system_build_id,
                                    constants.BUILD_BRANCH: args.system_branch,
@@ -526,6 +561,26 @@ class AVDSpec:
         self._kernel_build_info = {constants.BUILD_ID: args.kernel_build_id,
                                    constants.BUILD_BRANCH: args.kernel_branch,
                                    constants.BUILD_TARGET: args.kernel_build_target}
+
+    @staticmethod
+    def _CheckCFBuildTarget(instance_type):
+        """Check build target for the given instance type
+
+        Args:
+            instance_type: String of instance type
+
+        Raises:
+            errors.GetLocalImageError if the pattern is not match with
+                current build target.
+        """
+        build_target = utils.GetBuildEnvironmentVariable(
+            constants.ENV_BUILD_TARGET)
+        pattern = constants.CF_AVD_BUILD_TARGET_PATTERN_MAPPING[instance_type]
+        if pattern not in build_target:
+            utils.PrintColorString(
+                "%s is not a %s target (Try lunching a proper cuttlefish "
+                "target and running 'm')" % (build_target, pattern),
+                utils.TextColors.WARNING)
 
     @staticmethod
     def _GetGitRemote():
@@ -547,8 +602,8 @@ class AVDSpec:
             )
 
         acloud_project = os.path.join(android_build_top, "tools", "acloud")
-        return EscapeAnsi(subprocess.check_output(_COMMAND_GIT_REMOTE,
-                                                  cwd=acloud_project).strip())
+        return EscapeAnsi(utils.CheckOutput(_COMMAND_GIT_REMOTE,
+                                            cwd=acloud_project).strip())
 
     def _GetBuildBranch(self, build_id, build_target):
         """Infer build branch if user didn't specify branch name.
@@ -583,6 +638,7 @@ class AVDSpec:
         env = os.environ.copy()
         env.pop("PYTHONPATH", None)
         logger.info("Running command \"%s\"", _COMMAND_REPO_INFO)
+        # TODO(154173071): Migrate acloud to py3, then apply Popen to append with encoding
         process = subprocess.Popen(_COMMAND_REPO_INFO, shell=True, stdin=None,
                                    stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, env=env)
@@ -591,7 +647,7 @@ class AVDSpec:
         stdout, _ = process.communicate()
         if stdout:
             for line in stdout.splitlines():
-                match = _BRANCH_RE.match(EscapeAnsi(line))
+                match = _BRANCH_RE.match(EscapeAnsi(line.decode()))
                 if match:
                     branch_prefix = _BRANCH_PREFIX.get(self._GetGitRemote(),
                                                        _DEFAULT_BRANCH_PREFIX)
@@ -712,6 +768,11 @@ class AVDSpec:
     def num(self):
         """Return num of instances."""
         return self._num_of_instances
+
+    @property
+    def num_avds_per_instance(self):
+        """Return num_avds_per_instance."""
+        return self._num_avds_per_instance
 
     @property
     def report_internal_ip(self):

@@ -64,7 +64,7 @@ class AvdSpecTest(driver_test_lib.BaseDriverTest):
 
         # Specified --local-image to a dir contains images
         self.Patch(utils, "GetBuildEnvironmentVariable",
-                   return_value="test_environ")
+                   return_value="test_cf_x86")
         self.Patch(os.path, "isfile", return_value=False)
         self.args.local_image = "/path-to-image-dir"
         self.AvdSpec._avd_type = constants.TYPE_CF
@@ -75,7 +75,7 @@ class AvdSpecTest(driver_test_lib.BaseDriverTest):
         # Specified local_image without arg
         self.args.local_image = None
         self.Patch(utils, "GetBuildEnvironmentVariable",
-                   return_value="test_environ")
+                   side_effect=["cf_x86_auto", "test_environ", "test_environ"])
         self.AvdSpec._ProcessLocalImageArgs(self.args)
         self.assertEqual(self.AvdSpec._local_image_dir, "test_environ")
         self.assertEqual(self.AvdSpec.local_image_artifact, expected_image_artifact)
@@ -138,7 +138,7 @@ class AvdSpecTest(driver_test_lib.BaseDriverTest):
         fake_subprocess.stdout.readline = mock.MagicMock(return_value='')
         fake_subprocess.poll = mock.MagicMock(return_value=0)
         fake_subprocess.returncode = 0
-        return_value = "Manifest branch: master"
+        return_value = b"Manifest branch: master"
         fake_subprocess.communicate = mock.MagicMock(return_value=(return_value, ''))
         self.Patch(subprocess, "Popen", return_value=fake_subprocess)
 
@@ -147,13 +147,13 @@ class AvdSpecTest(driver_test_lib.BaseDriverTest):
 
         # Check default repo gets default branch prefix.
         mock_gitremote.return_value = ""
-        return_value = "Manifest branch: master"
+        return_value = b"Manifest branch: master"
         fake_subprocess.communicate = mock.MagicMock(return_value=(return_value, ''))
         self.Patch(subprocess, "Popen", return_value=fake_subprocess)
         self.assertEqual(self.AvdSpec._GetBranchFromRepo(), "git_master")
 
         # Can't get branch from repo info, set it as default branch.
-        return_value = "Manifest branch:"
+        return_value = b"Manifest branch:"
         fake_subprocess.communicate = mock.MagicMock(return_value=(return_value, ''))
         self.Patch(subprocess, "Popen", return_value=fake_subprocess)
         self.assertEqual(self.AvdSpec._GetBranchFromRepo(), "aosp-master")
@@ -232,6 +232,26 @@ class AvdSpecTest(driver_test_lib.BaseDriverTest):
             self.AvdSpec._ProcessHWPropertyArgs(args)
 
     # pylint: disable=protected-access
+    @mock.patch.object(utils, "PrintColorString")
+    def testCheckCFBuildTarget(self, print_warning):
+        """Test _CheckCFBuildTarget."""
+        # patch correct env variable.
+        self.Patch(utils, "GetBuildEnvironmentVariable",
+                   return_value="cf_x86_phone-userdebug")
+        self.AvdSpec._CheckCFBuildTarget(constants.INSTANCE_TYPE_REMOTE)
+        self.AvdSpec._CheckCFBuildTarget(constants.INSTANCE_TYPE_LOCAL)
+
+        self.Patch(utils, "GetBuildEnvironmentVariable",
+                   return_value="aosp_cf_arm64_auto-userdebug")
+        self.AvdSpec._CheckCFBuildTarget(constants.INSTANCE_TYPE_HOST)
+        # patch wrong env variable.
+        self.Patch(utils, "GetBuildEnvironmentVariable",
+                   return_value="test_environ")
+        self.AvdSpec._CheckCFBuildTarget(constants.INSTANCE_TYPE_REMOTE)
+
+        print_warning.assert_called_once()
+
+    # pylint: disable=protected-access
     def testParseHWPropertyStr(self):
         """Test _ParseHWPropertyStr."""
         expected_dict = {"cpu": "2", "x_res": "1080", "y_res": "1920",
@@ -304,6 +324,18 @@ class AvdSpecTest(driver_test_lib.BaseDriverTest):
         self.AvdSpec = avd_spec.AVDSpec(self.args)
         self.AvdSpec._ProcessRemoteBuildArgs(self.args)
         self.assertTrue(self.AvdSpec.avd_type == "cuttlefish")
+
+        self.args.cheeps_betty_image = 'abcdefg'
+        self.AvdSpec._ProcessRemoteBuildArgs(self.args)
+        self.assertEqual(
+            self.AvdSpec.remote_image[constants.CHEEPS_BETTY_IMAGE],
+            self.args.cheeps_betty_image)
+        self.args.cheeps_betty_image = None
+        self.AvdSpec._ProcessRemoteBuildArgs(self.args)
+        self.assertEqual(
+            self.AvdSpec.remote_image[constants.CHEEPS_BETTY_IMAGE],
+            self.args.cheeps_betty_image)
+
 
     def testEscapeAnsi(self):
         """Test EscapeAnsi."""
