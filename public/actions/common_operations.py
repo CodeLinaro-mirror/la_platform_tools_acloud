@@ -32,6 +32,15 @@ from acloud.internal.lib.adb_tools import AdbTools
 
 
 logger = logging.getLogger(__name__)
+_ERROR_TYPE = "error_type"
+_DICT_ERROR_TYPE = {
+    constants.STAGE_INIT: "ACLOUD_INIT_ERROR",
+    constants.STAGE_GCE: "ACLOUD_CREATE_GCE_ERROR",
+    constants.STAGE_ARTIFACT: "ACLOUD_DOWNLOAD_ARTIFACT_ERROR",
+    constants.STAGE_BOOT_UP: "ACLOUD_BOOT_UP_ERROR",
+}
+# Error type of GCE quota error.
+_GCE_QUOTA_ERROR = "GCE_QUOTA_ERROR"
 
 
 def CreateSshKeyPairIfNecessary(cfg):
@@ -100,9 +109,11 @@ class DevicePool(object):
             ip = self._compute_client.GetInstanceIP(instance)
             time_info = self._compute_client.execution_time if hasattr(
                 self._compute_client, "execution_time") else {}
+            stage = self._compute_client.stage if hasattr(
+                self._compute_client, "stage") else 0
             self.devices.append(
                 avd.AndroidVirtualDevice(ip=ip, instance_name=instance,
-                                         time_info=time_info))
+                                         time_info=time_info, stage=stage))
 
     @utils.TimeExecute(function_description="Waiting for AVD(s) to boot up",
                        result_evaluator=utils.BootEvaluator)
@@ -132,8 +143,7 @@ class DevicePool(object):
         Args:
             reporter: Report object.
         """
-        for key, value in self._compute_client.dict_report.items():
-            reporter.AddData(key=key, value=value)
+        reporter.UpdateData(self._compute_client.dict_report)
 
     def CollectSerialPortLogs(self, output_file,
                               port=constants.DEFAULT_SERIAL_PORT):
@@ -262,11 +272,14 @@ def CreateDevices(command, cfg, device_factory, num, avd_type,
                     ssh_user=constants.GCE_USER,
                     extra_args_ssh_tunnel=cfg.extra_args_ssh_tunnel)
             if device.instance_name in failures:
+                device_dict[_ERROR_TYPE] = _DICT_ERROR_TYPE[device.stage]
                 reporter.AddData(key="devices_failing_boot", value=device_dict)
                 reporter.AddError(str(failures[device.instance_name]))
             else:
                 reporter.AddData(key="devices", value=device_dict)
-    except errors.DriverError as e:
+    except (errors.DriverError, errors.CheckGCEZonesQuotaError) as e:
+        if isinstance(e, errors.CheckGCEZonesQuotaError):
+            reporter.UpdateData({_ERROR_TYPE: _GCE_QUOTA_ERROR})
         reporter.AddError(str(e))
         reporter.SetStatus(report.Status.FAIL)
     return reporter
