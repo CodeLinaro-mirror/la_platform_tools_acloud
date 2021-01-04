@@ -123,6 +123,8 @@ GF_ADB_PORT = 5555
 GF_VNC_PORT = 6444
 # For FVP remote instances (no VNC support)
 FVP_ADB_PORT = 5555
+# Maximum port number
+MAX_PORT = 65535
 
 COMMAND_PS = ["ps", "aux"]
 CMD_LAUNCH_CVD = "launch_cvd"
@@ -131,12 +133,14 @@ CMD_STOP_CVD = "stop_cvd"
 CMD_RUN_CVD = "run_cvd"
 ENV_ANDROID_BUILD_TOP = "ANDROID_BUILD_TOP"
 ENV_ANDROID_EMULATOR_PREBUILTS = "ANDROID_EMULATOR_PREBUILTS"
+# TODO(b/172535794): Remove the deprecated "ANDROID_HOST_OUT" by 2021Q4.
 ENV_ANDROID_HOST_OUT = "ANDROID_HOST_OUT"
 ENV_ANDROID_PRODUCT_OUT = "ANDROID_PRODUCT_OUT"
+ENV_ANDROID_SOONG_HOST_OUT = "ANDROID_SOONG_HOST_OUT"
 ENV_ANDROID_TMP = "ANDROID_TMP"
 ENV_BUILD_TARGET = "TARGET_PRODUCT"
 
-LOCALHOST = "127.0.0.1"
+LOCALHOST = "0.0.0.0"
 LOCALHOST_ADB_SERIAL = LOCALHOST + ":%d"
 
 SSH_BIN = "ssh"
@@ -163,7 +167,6 @@ INS_KEY_AVD_FLAVOR = "flavor"
 INS_KEY_IS_LOCAL = "remote"
 INS_KEY_ZONE = "zone"
 INS_STATUS_RUNNING = "RUNNING"
-LOCAL_INS_NAME = "local-instance"
 ENV_CUTTLEFISH_CONFIG_FILE = "CUTTLEFISH_CONFIG_FILE"
 ENV_CUTTLEFISH_INSTANCE = "CUTTLEFISH_INSTANCE"
 ENV_CVD_HOME = "HOME"
@@ -171,6 +174,8 @@ CUTTLEFISH_CONFIG_FILE = "cuttlefish_config.json"
 
 TEMP_ARTIFACTS_FOLDER = "acloud_image_artifacts"
 CVD_HOST_PACKAGE = "cvd-host_package.tar.gz"
+# cvd tools symbolic link name of local instance.
+CVD_TOOLS_LINK_NAME = "host_bins"
 TOOL_NAME = "acloud"
 # Exit code in metrics
 EXIT_SUCCESS = 0
@@ -194,3 +199,12 @@ CHEEPS_BETTY_IMAGE = "betty_image"
 
 # Key name in report
 ERROR_LOG_FOLDER = "error_log_folder"
+
+# Stages for create progress
+STAGE_INIT = 0
+STAGE_GCE = 1
+STAGE_ARTIFACT = 2
+STAGE_BOOT_UP = 3
+
+# The name of download image tool.
+FETCH_CVD = "fetch_cvd"

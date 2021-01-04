@@ -15,7 +15,6 @@
 
 import logging
 import os
-import stat
 import subprocess
 import tempfile
 
@@ -61,12 +60,13 @@ def FindOtaTools(search_paths):
         if os.path.isfile(os.path.join(search_path, _BIN_DIR_NAME,
                                        _BUILD_SUPER_IMAGE)):
             return search_path
-
-    host_out_dir = os.environ.get(constants.ENV_ANDROID_HOST_OUT)
-    if (host_out_dir and
-            os.path.isfile(os.path.join(host_out_dir, _BIN_DIR_NAME,
-                                        _BUILD_SUPER_IMAGE))):
-        return host_out_dir
+    for env_host_out in [constants.ENV_ANDROID_SOONG_HOST_OUT,
+                         constants.ENV_ANDROID_HOST_OUT]:
+        host_out_dir = os.environ.get(env_host_out)
+        if (host_out_dir and
+                os.path.isfile(os.path.join(host_out_dir, _BIN_DIR_NAME,
+                                            _BUILD_SUPER_IMAGE))):
+            return host_out_dir
 
     raise errors.CheckPathError(_MISSING_OTA_TOOLS_MSG %
                                 {"tool_name": "OTA tool directory"})
@@ -94,9 +94,7 @@ class OtaTools:
         if not os.path.isfile(path):
             raise errors.NoExecuteCmd(_MISSING_OTA_TOOLS_MSG %
                                       {"tool_name": name})
-        mode = os.stat(path).st_mode
-        os.chmod(path, mode | (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH |
-                               stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH))
+        utils.SetExecutable(path)
         return path
 
     @staticmethod

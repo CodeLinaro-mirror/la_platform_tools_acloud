@@ -15,6 +15,7 @@
 # limitations under the License.
 """Tests for acloud.internal.lib.utils."""
 
+import collections
 import errno
 import getpass
 import grp
@@ -34,6 +35,12 @@ from acloud.internal.lib import driver_test_lib
 from acloud.internal.lib import utils
 
 
+GroupInfo = collections.namedtuple("GroupInfo", [
+    "gr_name",
+    "gr_passwd",
+    "gr_gid",
+    "gr_mem"])
+
 # Tkinter may not be supported so mock it out.
 try:
     import Tkinter
@@ -41,7 +48,7 @@ except ImportError:
     Tkinter = mock.Mock()
 
 
-class FakeTkinter(object):
+class FakeTkinter:
     """Fake implementation of Tkinter.Tk()"""
 
     def __init__(self, width=None, height=None):
@@ -301,28 +308,23 @@ class UtilsTest(driver_test_lib.BaseDriverTest):
         avd_w = 1080
         self.assertEqual(utils.CalculateVNCScreenRatio(avd_w, avd_h), 0.6)
 
-    # pylint: disable=protected-access
     def testCheckUserInGroups(self):
         """Test CheckUserInGroups."""
-        self.Patch(os, "getgroups", return_value=[1, 2, 3])
-        gr1 = mock.MagicMock()
-        gr1.gr_name = "fake_gr_1"
-        gr2 = mock.MagicMock()
-        gr2.gr_name = "fake_gr_2"
-        gr3 = mock.MagicMock()
-        gr3.gr_name = "fake_gr_3"
-        self.Patch(grp, "getgrgid", side_effect=[gr1, gr2, gr3])
+        self.Patch(getpass, "getuser", return_value="user_0")
+        self.Patch(grp, "getgrall", return_value=[
+            GroupInfo("fake_group1", "passwd_1", 0, ["user_1", "user_2"]),
+            GroupInfo("fake_group2", "passwd_2", 1, ["user_1", "user_2"])])
+        self.Patch(grp, "getgrnam", return_value=GroupInfo(
+            "fake_group1", "passwd_1", 0, ["user_1", "user_2"]))
+        # Test Group name doesn't exist.
+        self.assertFalse(utils.CheckUserInGroups(["Non_exist_group"]))
 
-        # User in all required groups should return true.
-        self.assertTrue(
-            utils.CheckUserInGroups(
-                ["fake_gr_1", "fake_gr_2"]))
+        # Test User isn't in group.
+        self.assertFalse(utils.CheckUserInGroups(["fake_group1"]))
 
-        # User not in all required groups should return False.
-        self.Patch(grp, "getgrgid", side_effect=[gr1, gr2, gr3])
-        self.assertFalse(
-            utils.CheckUserInGroups(
-                ["fake_gr_1", "fake_gr_4"]))
+        # Test User is in group.
+        self.Patch(getpass, "getuser", return_value="user_1")
+        self.assertTrue(utils.CheckUserInGroups(["fake_group1"]))
 
     @mock.patch.object(utils, "CheckUserInGroups")
     def testAddUserGroupsToCmd(self, mock_user_group):
@@ -493,6 +495,23 @@ class UtilsTest(driver_test_lib.BaseDriverTest):
         self.Patch(os.environ, "get", return_value=False)
         utils.LaunchBrowserFromReport(fake_report)
         self.assertEqual(webbrowser.open_new_tab.call_count, 0)
+
+    def testSetExecutable(self):
+        """test setting a file to be executable."""
+        with tempfile.NamedTemporaryFile(delete=True) as temp_file:
+            utils.SetExecutable(temp_file.name)
+            self.assertEqual(os.stat(temp_file.name).st_mode & 0o777, 0o755)
+
+    def testSetDirectoryTreeExecutable(self):
+        """test setting a file in a directory to be executable."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            subdir = os.path.join(temp_dir, "subdir")
+            file_path = os.path.join(subdir, "file")
+            os.makedirs(subdir)
+            with open(file_path, "w"):
+                pass
+            utils.SetDirectoryTreeExecutable(temp_dir)
+            self.assertEqual(os.stat(file_path).st_mode & 0o777, 0o755)
 
 
 if __name__ == "__main__":

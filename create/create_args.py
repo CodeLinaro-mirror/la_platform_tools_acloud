@@ -131,6 +131,24 @@ def AddCommonCreateArgs(parser):
         dest="build_id",
         help="Android build id, e.g. 2145099, P2804227")
     parser.add_argument(
+        "--bootloader-branch",
+        type=str,
+        dest="bootloader_branch",
+        help="'cuttlefish only' Branch to consume the bootloader from.",
+        required=False)
+    parser.add_argument(
+        "--bootloader-build-id",
+        type=str,
+        dest="bootloader_build_id",
+        help="'cuttlefish only' Bootloader build id, e.g. P2804227",
+        required=False)
+    parser.add_argument(
+        "--bootloader-build-target",
+        type=str,
+        dest="bootloader_build_target",
+        help="'cuttlefish only' Bootloader build target.",
+        required=False)
+    parser.add_argument(
         "--kernel-build-id",
         type=str,
         dest="kernel_build_id",
@@ -216,6 +234,11 @@ def AddCommonCreateArgs(parser):
              "local gpu support.")
     # Hide following args for users, it is only used in infra.
     parser.add_argument(
+        "--local-instance-dir",
+        dest="local_instance_dir",
+        required=False,
+        help=argparse.SUPPRESS)
+    parser.add_argument(
         "--num-avds-per-instance",
         type=int,
         dest="num_avds_per_instance",
@@ -285,6 +308,24 @@ def AddCommonCreateArgs(parser):
         dest="kernel_build_target",
         default="kernel",
         help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--bootloader_branch",
+        type=str,
+        dest="bootloader_branch",
+        help=argparse.SUPPRESS,
+        required=False)
+    parser.add_argument(
+        "--bootloader_build_id",
+        type=str,
+        dest="bootloader_build_id",
+        help=argparse.SUPPRESS,
+        required=False)
+    parser.add_argument(
+        "--bootloader_build_target",
+        type=str,
+        dest="bootloader_build_target",
+        help=argparse.SUPPRESS,
+        required=False)
 
 
 def GetCreateArgParser(subparser):
@@ -299,17 +340,19 @@ def GetCreateArgParser(subparser):
     create_parser = subparser.add_parser(CMD_CREATE)
     create_parser.required = False
     create_parser.set_defaults(which=CMD_CREATE)
-    # Use default=0 to distinguish remote instance or local. The instance type
-    # will be remote if arg --local-instance is not provided.
+    # Use default=None to distinguish remote instance or local. The instance
+    # type will be remote if the arg is not provided.
     create_parser.add_argument(
         "--local-instance",
-        type=int,
-        const=1,
+        type=_PositiveInteger,
+        const=0,
+        metavar="ID",
         nargs="?",
         dest="local_instance",
         required=False,
-        help="Create a local AVD instance with the option to specify the local "
-             "instance ID (primarily for infra usage).")
+        help="Create a local AVD instance using the resources associated with "
+             "the ID. Choose an unused ID automatically if the value is "
+             "not specified (primarily for infra usage).")
     create_parser.add_argument(
         "--adb-port", "-p",
         type=int,
@@ -481,6 +524,17 @@ def GetCreateArgParser(subparser):
     return create_parser
 
 
+def _PositiveInteger(arg):
+    """Convert an argument from a string to a positive integer."""
+    try:
+        value = int(arg)
+    except ValueError:
+        raise argparse.ArgumentTypeError(arg + " is not an integer.")
+    if value <= 0:
+        raise argparse.ArgumentTypeError(arg + " is not positive.")
+    return value
+
+
 def _VerifyLocalArgs(args):
     """Verify args starting with --local.
 
@@ -497,6 +551,10 @@ def _VerifyLocalArgs(args):
         raise errors.CheckPathError(
             "Specified path doesn't exist: %s" % args.local_image)
 
+    if args.local_instance_dir and not os.path.exists(args.local_instance_dir):
+        raise errors.CheckPathError(
+            "Specified path doesn't exist: %s" % args.local_instance_dir)
+
     # TODO(b/133211308): Support TYPE_CF.
     if args.local_system_image != "" and args.avd_type != constants.TYPE_GF:
         raise errors.UnsupportedCreateArgs("%s instance does not support "
@@ -507,11 +565,6 @@ def _VerifyLocalArgs(args):
             not os.path.exists(args.local_system_image)):
         raise errors.CheckPathError(
             "Specified path doesn't exist: %s" % args.local_system_image)
-
-    if args.local_instance is not None and args.local_instance < 1:
-        raise errors.UnsupportedLocalInstanceId("Local instance id can not be "
-                                                "less than 1. Actually passed:%d"
-                                                % args.local_instance)
 
     for tool_dir in args.local_tool:
         if not os.path.exists(tool_dir):

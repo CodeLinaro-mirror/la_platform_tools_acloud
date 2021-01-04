@@ -112,6 +112,7 @@ class AVDSpec():
         self._instance_type = None
         self._local_image_dir = None
         self._local_image_artifact = None
+        self._local_instance_dir = None
         self._local_system_image_dir = None
         self._local_tool_dirs = None
         self._image_download_dir = None
@@ -121,6 +122,7 @@ class AVDSpec():
         self._remote_image = None
         self._system_build_info = None
         self._kernel_build_info = None
+        self._bootloader_build_info = None
         self._hw_property = None
         self._remote_host = None
         self._host_user = None
@@ -294,13 +296,14 @@ class AVDSpec():
         if args.remote_host:
             self._instance_type = constants.INSTANCE_TYPE_HOST
         else:
-            self._instance_type = (constants.INSTANCE_TYPE_LOCAL
-                                   if args.local_instance else
-                                   constants.INSTANCE_TYPE_REMOTE)
+            self._instance_type = (constants.INSTANCE_TYPE_REMOTE
+                                   if args.local_instance is None else
+                                   constants.INSTANCE_TYPE_LOCAL)
         self._remote_host = args.remote_host
         self._host_user = args.host_user
         self._host_ssh_private_key_path = args.host_ssh_private_key_path
         self._local_instance_id = args.local_instance
+        self._local_instance_dir = args.local_instance_dir
         self._local_tool_dirs = args.local_tool
         self._num_of_instances = args.num
         self._num_avds_per_instance = args.num_avds_per_instance
@@ -361,7 +364,7 @@ class AVDSpec():
         if self._avd_type == constants.TYPE_CF:
             self._ProcessCFLocalImageArgs(args.local_image, args.flavor)
         elif self._avd_type == constants.TYPE_FVP:
-            self._ProcessFVPLocalImageArgs(args.local_image)
+            self._ProcessFVPLocalImageArgs()
         elif self._avd_type == constants.TYPE_GF:
             self._local_image_dir = self._ProcessGFLocalImageArgs(
                 args.local_image)
@@ -488,12 +491,8 @@ class AVDSpec():
         if flavor_from_build_string and not flavor_arg:
             self._flavor = flavor_from_build_string
 
-    def _ProcessFVPLocalImageArgs(self, local_image_arg):
-        """Get local built image path for FVP-type AVD.
-
-        Args:
-            local_image_arg: String of local image args.
-        """
+    def _ProcessFVPLocalImageArgs(self):
+        """Get local built image path for FVP-type AVD."""
         build_target = utils.GetBuildEnvironmentVariable(
             constants.ENV_BUILD_TARGET)
         if build_target != "fvp":
@@ -552,7 +551,7 @@ class AVDSpec():
                 self._remote_image[constants.BUILD_BRANCH])
 
         self._remote_image[constants.CHEEPS_BETTY_IMAGE] = (
-            args.cheeps_betty_image)
+            args.cheeps_betty_image or self._cfg.betty_image)
 
         # Process system image and kernel image.
         self._system_build_info = {constants.BUILD_ID: args.system_build_id,
@@ -561,6 +560,10 @@ class AVDSpec():
         self._kernel_build_info = {constants.BUILD_ID: args.kernel_build_id,
                                    constants.BUILD_BRANCH: args.kernel_branch,
                                    constants.BUILD_TARGET: args.kernel_build_target}
+        self._bootloader_build_info = {
+            constants.BUILD_ID: args.bootloader_build_id,
+            constants.BUILD_BRANCH: args.bootloader_branch,
+            constants.BUILD_TARGET: args.bootloader_build_target}
 
     @staticmethod
     def _CheckCFBuildTarget(instance_type):
@@ -641,13 +644,14 @@ class AVDSpec():
         # TODO(154173071): Migrate acloud to py3, then apply Popen to append with encoding
         process = subprocess.Popen(_COMMAND_REPO_INFO, shell=True, stdin=None,
                                    stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, env=env)
+                                   stderr=subprocess.STDOUT, env=env,
+                                   universal_newlines=True)
         timer = threading.Timer(_REPO_TIMEOUT, process.kill)
         timer.start()
         stdout, _ = process.communicate()
         if stdout:
             for line in stdout.splitlines():
-                match = _BRANCH_RE.match(EscapeAnsi(line.decode()))
+                match = _BRANCH_RE.match(EscapeAnsi(line))
                 if match:
                     branch_prefix = _BRANCH_PREFIX.get(self._GetGitRemote(),
                                                        _DEFAULT_BRANCH_PREFIX)
@@ -704,6 +708,11 @@ class AVDSpec():
     def local_image_artifact(self):
         """Return local image artifact."""
         return self._local_image_artifact
+
+    @property
+    def local_instance_dir(self):
+        """Return local instance directory."""
+        return self._local_instance_dir
 
     @property
     def local_system_image_dir(self):
@@ -783,6 +792,11 @@ class AVDSpec():
     def kernel_build_info(self):
         """Return kernel build info."""
         return self._kernel_build_info
+
+    @property
+    def bootloader_build_info(self):
+        """Return bootloader build info."""
+        return self._bootloader_build_info
 
     @property
     def flavor(self):

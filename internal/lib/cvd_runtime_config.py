@@ -19,7 +19,7 @@ import re
 
 from acloud import errors
 
-_CFG_KEY_ADB_CONNECTOR_BINARY = "adb_connector_binary"
+_CFG_KEY_CROSVM_BINARY = "crosvm_binary"
 _CFG_KEY_X_RES = "x_res"
 _CFG_KEY_Y_RES = "y_res"
 _CFG_KEY_DPI = "dpi"
@@ -47,10 +47,10 @@ def _GetIdFromInstanceDirStr(instance_dir):
     match = _RE_LOCAL_INSTANCE_ID.match(instance_dir)
     if match:
         return match.group("ins_id")
-    else:
-        # To support the device which is not created by acloud.
-        if os.path.expanduser("~") in instance_dir:
-            return "1"
+
+    # To support the device which is not created by acloud.
+    if os.path.expanduser("~") in instance_dir:
+        return "1"
 
     return None
 
@@ -67,7 +67,7 @@ class CvdRuntimeConfig(object):
         [
             "/path-to-image"
         ],
-    "adb_ip_and_port" : "127.0.0.1:6520",
+    "adb_ip_and_port" : "0.0.0.0:6520",
     "instance_dir" : "/path-to-instance-dir",
     }
 
@@ -80,7 +80,7 @@ class CvdRuntimeConfig(object):
         {
             "1" :
             {
-                "adb_ip_and_port" : "127.0.0.1:6520",
+                "adb_ip_and_port" : "0.0.0.0:6520",
                 "instance_dir" : "/path-to-instance-dir",
                 "virtual_disk_paths" :
                 [
@@ -98,7 +98,7 @@ class CvdRuntimeConfig(object):
     "webrtc_binary" : "/home/vsoc-01/bin/webRTC",
     "webrtc_certs_dir" : "/home/vsoc-01/usr/share/webrtc/certs",
     "webrtc_enable_adb_websocket" : false,
-    "webrtc_public_ip" : "127.0.0.1",
+    "webrtc_public_ip" : "0.0.0.0",
     }
 
     """
@@ -112,9 +112,9 @@ class CvdRuntimeConfig(object):
         self._x_res = self._config_dict.get(_CFG_KEY_X_RES)
         self._y_res = self._config_dict.get(_CFG_KEY_Y_RES)
         self._dpi = self._config_dict.get(_CFG_KEY_DPI)
-        adb_connector = self._config_dict.get(_CFG_KEY_ADB_CONNECTOR_BINARY)
-        self._cvd_tools_path = (os.path.dirname(adb_connector)
-                                if adb_connector else None)
+        crosvm_bin = self._config_dict.get(_CFG_KEY_CROSVM_BINARY)
+        self._cvd_tools_path = (os.path.dirname(crosvm_bin)
+                                if crosvm_bin else None)
 
         # Below properties will be collected inside of instance id node if there
         # are more than one instance.

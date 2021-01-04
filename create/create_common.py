@@ -17,6 +17,7 @@
 
 import logging
 import os
+import shutil
 
 from acloud import errors
 from acloud.internal import constants
@@ -75,7 +76,11 @@ def GetCvdHostPackage():
     Raises:
         errors.GetCvdLocalHostPackageError: Can't find cvd host package.
     """
-    dirs_to_check = list(filter(None, [os.environ.get(constants.ENV_ANDROID_HOST_OUT)]))
+    dirs_to_check = list(
+        filter(None, [
+            os.environ.get(constants.ENV_ANDROID_SOONG_HOST_OUT),
+            os.environ.get(constants.ENV_ANDROID_HOST_OUT)
+        ]))
     dist_dir = utils.GetDistDir()
     if dist_dir:
         dirs_to_check.append(dist_dir)
@@ -118,3 +123,28 @@ def DownloadRemoteArtifact(cfg, build_target, build_id, artifact, extract_path,
             logger.debug("Deleted temporary file %s", temp_file)
         except OSError as e:
             logger.error("Failed to delete temporary file: %s", str(e))
+
+
+def PrepareLocalInstanceDir(instance_dir, avd_spec):
+    """Create a directory for a local cuttlefish or goldfish instance.
+
+    If avd_spec has the local instance directory, this method creates a
+    symbolic link from instance_dir to the directory. Otherwise, it creates an
+    empty directory at instance_dir.
+
+    Args:
+        instance_dir: The absolute path to the default instance directory.
+        avd_spec: AVDSpec object that provides the instance directory.
+    """
+    if os.path.islink(instance_dir):
+        os.remove(instance_dir)
+    else:
+        shutil.rmtree(instance_dir, ignore_errors=True)
+
+    if avd_spec.local_instance_dir:
+        abs_instance_dir = os.path.abspath(avd_spec.local_instance_dir)
+        if instance_dir != abs_instance_dir:
+            os.symlink(abs_instance_dir, instance_dir)
+            return
+    if not os.path.exists(instance_dir):
+        os.makedirs(instance_dir)
