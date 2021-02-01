@@ -262,6 +262,9 @@ def CreateDevices(command, cfg, device_factory, num, avd_type,
                     extra_args_ssh_tunnel=cfg.extra_args_ssh_tunnel)
                 device_dict[constants.VNC_PORT] = forwarded_ports.vnc_port
                 device_dict[constants.ADB_PORT] = forwarded_ports.adb_port
+                device_dict[constants.DEVICE_SERIAL] = (
+                    constants.REMOTE_INSTANCE_ADB_SERIAL %
+                    forwarded_ports.adb_port)
                 if unlock_screen:
                     AdbTools(forwarded_ports.adb_port).AutoUnlockScreen()
             if connect_webrtc:
