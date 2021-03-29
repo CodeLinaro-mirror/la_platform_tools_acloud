@@ -53,7 +53,6 @@ import glob
 import logging
 import os
 import subprocess
-import threading
 import sys
 
 from acloud import errors
@@ -75,13 +74,13 @@ _MISC_INFO_FILE_NAME = "misc_info.txt"
 _TARGET_FILES_IMAGES_DIR_NAME = "IMAGES"
 _TARGET_FILES_META_DIR_NAME = "META"
 _MIXED_SUPER_IMAGE_NAME = "mixed_super.img"
-_CMD_LAUNCH_CVD_ARGS = (" -daemon -config=%s -run_adb_connector=%s "
-                        "-system_image_dir %s -instance_dir %s "
-                        "-undefok=report_anonymous_usage_stats,enable_sandbox "
-                        "-report_anonymous_usage_stats=y "
-                        "-enable_sandbox=false")
+_CMD_LAUNCH_CVD_ARGS = (
+    " -daemon -config=%s -run_adb_connector=%s "
+    "-system_image_dir %s -instance_dir %s "
+    "-undefok=report_anonymous_usage_stats,enable_sandbox,config "
+    "-report_anonymous_usage_stats=y "
+    "-enable_sandbox=false")
 _CMD_LAUNCH_CVD_HW_ARGS = " -cpus %s -x_res %s -y_res %s -dpi %s -memory_mb %s"
-_CMD_LAUNCH_CVD_GPU_ARG = " -gpu_mode=auto"
 _CMD_LAUNCH_CVD_DISK_ARGS = (" -blank_data_image_mb %s "
                              "-data_policy always_create")
 _CMD_LAUNCH_CVD_WEBRTC_ARGS = (" -guest_enforce_security=false "
@@ -224,7 +223,6 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
                                        runtime_dir,
                                        avd_spec.connect_webrtc,
                                        avd_spec.connect_vnc,
-                                       avd_spec.gpu,
                                        super_image_path,
                                        avd_spec.cfg.launch_args,
                                        avd_spec.flavor)
@@ -395,8 +393,8 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
     @staticmethod
     def PrepareLaunchCVDCmd(launch_cvd_path, hw_property, connect_adb,
                             image_dir, runtime_dir, connect_webrtc,
-                            connect_vnc, gpu, super_image_path,
-                            launch_args, flavor):
+                            connect_vnc, super_image_path, launch_args,
+                            flavor):
         """Prepare launch_cvd command.
 
         Create the launch_cvd commands with all the required args and add
@@ -410,8 +408,6 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
             runtime_dir: String of runtime directory path.
             connect_webrtc: Boolean of connect_webrtc.
             connect_vnc: Boolean of connect_vnc.
-            gpu: String of gpu name, the gpu name of local instance should be
-                 "default" if gpu is enabled.
             super_image_path: String of non-default super image path.
             launch_args: String of launch args.
             flavor: String of flavor name.
@@ -433,9 +429,6 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
 
         if connect_vnc:
             launch_cvd_w_args = launch_cvd_w_args + _CMD_LAUNCH_CVD_VNC_ARG
-
-        if gpu:
-            launch_cvd_w_args = launch_cvd_w_args + _CMD_LAUNCH_CVD_GPU_ARG
 
         if super_image_path:
             launch_cvd_w_args = (launch_cvd_w_args +
@@ -495,7 +488,7 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
     @staticmethod
     @utils.TimeExecute(function_description="Waiting for AVD(s) to boot up")
     def _LaunchCvd(cmd, local_instance_id, host_bins_path, cvd_home_dir,
-                   timeout=None):
+                   timeout):
         """Execute Launch CVD.
 
         Kick off the launch_cvd command and log the output.
@@ -518,15 +511,12 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
         cvd_env[constants.ENV_CUTTLEFISH_INSTANCE] = str(local_instance_id)
         # Check the result of launch_cvd command.
         # An exit code of 0 is equivalent to VIRTUAL_DEVICE_BOOT_COMPLETED
-        process = subprocess.Popen(cmd, shell=True, stderr=subprocess.STDOUT,
-                                   env=cvd_env)
-        if timeout:
-            timer = threading.Timer(timeout, process.kill)
-            timer.start()
-        process.wait()
-        if timeout:
-            timer.cancel()
-        if process.returncode == 0:
-            return
-        raise errors.LaunchCVDFail("launch_cvd returned %s" %
-                                   process.returncode)
+        try:
+            subprocess.check_call(cmd, shell=True, stderr=subprocess.STDOUT,
+                                  env=cvd_env, timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            raise errors.LaunchCVDFail("Device did not boot within %d secs." %
+                                       timeout) from e
+        except subprocess.CalledProcessError as e:
+            raise errors.LaunchCVDFail("launch_cvd returned %s." %
+                                       e.returncode) from e
