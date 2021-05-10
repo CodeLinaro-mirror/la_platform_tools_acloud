@@ -247,6 +247,12 @@ def AddCommonCreateArgs(parser):
         default=1,
         help=argparse.SUPPRESS)
     parser.add_argument(
+        "--oxygen",
+        action="store_true",
+        dest="oxygen",
+        required=False,
+        help=argparse.SUPPRESS)
+    parser.add_argument(
         "--zone",
         type=str,
         dest="zone",
@@ -386,6 +392,18 @@ def GetCreateArgParser(subparser):
         "artifact in $ANDROID_PRODUCT_OUT if no args value is provided."
         "e.g --local-image or --local-image /path/to/dir or --local-image "
         "/path/to/file")
+    create_parser.add_argument(
+        "--local-kernel-image",
+        const=constants.FIND_IN_BUILD_ENV,
+        type=str,
+        dest="local_kernel_image",
+        nargs="?",
+        required=False,
+        help="Use the locally built kernel image for the AVD. Look for "
+        "boot.img or boot-*.img if the argument is a directory. Look for the "
+        "image in $ANDROID_PRODUCT_OUT if no argument is provided. e.g., "
+        "--local-kernel-image, --local-kernel-image /path/to/dir, or "
+        "--local-kernel-image /path/to/img")
     create_parser.add_argument(
         "--local-system-image",
         const=constants.FIND_IN_BUILD_ENV,
