@@ -113,12 +113,14 @@ class AVDSpec():
         self._local_image_dir = None
         self._local_image_artifact = None
         self._local_instance_dir = None
+        self._local_kernel_image = None
         self._local_system_image = None
         self._local_tool_dirs = None
         self._image_download_dir = None
         self._num_of_instances = None
         self._num_avds_per_instance = None
         self._no_pull_log = None
+        self._oxygen = None
         self._remote_image = None
         self._system_build_info = None
         self._kernel_build_info = None
@@ -318,6 +320,7 @@ class AVDSpec():
         self._num_of_instances = args.num
         self._num_avds_per_instance = args.num_avds_per_instance
         self._no_pull_log = args.no_pull_log
+        self._oxygen = args.oxygen
         self._serial_log_file = args.serial_log_file
         self._emulator_build_id = args.emulator_build_id
         self._gpu = args.gpu
@@ -389,6 +392,10 @@ class AVDSpec():
             raise errors.CreateError(
                 "Local image doesn't support the AVD type: %s" % self._avd_type
             )
+
+        if args.local_kernel_image is not None:
+            self._local_kernel_image = self._GetLocalImagePath(
+                args.local_kernel_image)
 
         if args.local_system_image is not None:
             self._local_system_image = self._GetLocalImagePath(
@@ -732,6 +739,11 @@ class AVDSpec():
         return self._local_instance_dir
 
     @property
+    def local_kernel_image(self):
+        """Return local kernel image path."""
+        return self._local_kernel_image
+
+    @property
     def local_system_image(self):
         """Return local system image path."""
         return self._local_system_image
@@ -925,3 +937,8 @@ class AVDSpec():
     def gce_metadata(self):
         """Return gce_metadata."""
         return self._gce_metadata
+
+    @property
+    def oxygen(self):
+        """Return oxygen."""
+        return self._oxygen
