@@ -113,6 +113,7 @@ INSTANCE_NAME = "instance_name"
 GCE_USER = "vsoc-01"
 VNC_PORT = "vnc_port"
 ADB_PORT = "adb_port"
+WEBRTC_PORT = "webrtc_port"
 DEVICE_SERIAL = "device_serial"
 # For cuttlefish remote instances
 CF_ADB_PORT = 6520
@@ -209,8 +210,9 @@ ERROR_LOG_FOLDER = "error_log_folder"
 # Stages for create progress
 STAGE_INIT = 0
 STAGE_GCE = 1
-STAGE_ARTIFACT = 2
-STAGE_BOOT_UP = 3
+STAGE_SSH_CONNECT = 2
+STAGE_ARTIFACT = 3
+STAGE_BOOT_UP = 4
 
 # The name of download image tool.
 FETCH_CVD = "fetch_cvd"

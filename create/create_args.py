@@ -17,6 +17,7 @@ Defines the create arg parser that holds create specific args.
 """
 
 import argparse
+import logging
 import os
 
 from acloud import errors
@@ -24,7 +25,7 @@ from acloud.create import create_common
 from acloud.internal import constants
 from acloud.internal.lib import utils
 
-
+logger = logging.getLogger(__name__)
 _DEFAULT_GPU = "default"
 CMD_CREATE = "create"
 
@@ -369,10 +370,11 @@ def GetCreateArgParser(subparser):
                  constants.TYPE_FVP],
         help="Android Virtual Device type (default %s)." % constants.TYPE_CF)
     create_parser.add_argument(
-        "--flavor",
+        "--config", "--flavor",
         type=str,
         dest="flavor",
-        help="The device flavor of the AVD (default %s)." % constants.FLAVOR_PHONE)
+        help="The device flavor of the AVD (default %s). e.g. phone, tv, foldable."
+        % constants.FLAVOR_PHONE)
     create_parser.add_argument(
         "--local-image",
         const=constants.FIND_IN_BUILD_ENV,
@@ -393,7 +395,8 @@ def GetCreateArgParser(subparser):
         required=False,
         help="Use the locally built system images for the AVD. Look for the "
         "images in $ANDROID_PRODUCT_OUT if no args value is provided. "
-        "e.g., --local-system-image or --local-system-image /path/to/dir")
+        "e.g., --local-system-image, --local-system-image /path/to/dir, or "
+        "--local-system-image /path/to/img")
     create_parser.add_argument(
         "--local-tool",
         type=str,
@@ -618,7 +621,6 @@ def VerifyArgs(args):
         args: Namespace object from argparse.parse_args.
 
     Raises:
-        errors.UnsupportedFlavor: Flavor doesn't support.
         errors.UnsupportedMultiAdbPort: multi adb port doesn't support.
         errors.UnsupportedCreateArgs: When a create arg is specified but
                                       unsupported for a particular avd type.
@@ -628,9 +630,9 @@ def VerifyArgs(args):
     # We don't use argparse's builtin validation because we need to be able to
     # tell when a user doesn't specify a flavor.
     if args.flavor and args.flavor not in constants.ALL_FLAVORS:
-        raise errors.UnsupportedFlavor(
-            "Flavor[%s] isn't in support list: %s" % (args.flavor,
-                                                      constants.ALL_FLAVORS))
+        logger.debug("Flavor[%s] isn't in default support list: %s",
+                     args.flavor, constants.ALL_FLAVORS)
+
     if args.avd_type != constants.TYPE_CF:
         if args.system_branch or args.system_build_id or args.system_build_target:
             raise errors.UnsupportedCreateArgs(
