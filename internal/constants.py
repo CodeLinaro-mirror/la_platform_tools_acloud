@@ -200,6 +200,7 @@ WEBRTC_LOCAL_PORT = 8443
 WEBRTC_LOCAL_HOST = "localhost"
 WEBRTC_CERTS_PATH = "usr/share/webrtc/certs"
 WEBRTC_CERTS_FILES = ["server.crt", "server.key"]
+MKCERT_INSTALL_DIR = ".config/acloud/mkcert"
 
 # Remote Log
 REMOTE_LOG_FOLDER = "/home/%s/cuttlefish_runtime" % GCE_USER
@@ -218,6 +219,8 @@ STAGE_ARTIFACT = 3
 STAGE_BOOT_UP = 4
 
 # Acloud error types
+# Also update InfraErrorIdentifier.java in TradeFed for the errors to be
+# properly reported.
 ACLOUD_BOOT_UP_ERROR = "ACLOUD_BOOT_UP_ERROR"
 ACLOUD_CREATE_GCE_ERROR = "ACLOUD_CREATE_GCE_ERROR"
 ACLOUD_DOWNLOAD_ARTIFACT_ERROR = "ACLOUD_DOWNLOAD_ARTIFACT_ERROR"
@@ -225,6 +228,15 @@ ACLOUD_INIT_ERROR = "ACLOUD_INIT_ERROR"
 ACLOUD_UNKNOWN_ERROR = "ACLOUD_UNKNOWN_ERROR"
 ACLOUD_SSH_CONNECT_ERROR = "ACLOUD_SSH_CONNECT_ERROR"
 GCE_QUOTA_ERROR = "GCE_QUOTA_ERROR"
+ACLOUD_OXYGEN_LEASE_ERROR = "ACLOUD_OXYGEN_LEASE_ERROR"
+ACLOUD_OXYGEN_RELEASE_ERROR = "ACLOUD_OXYGEN_RELEASE_ERROR"
 
 # The name of download image tool.
 FETCH_CVD = "fetch_cvd"
+
+# For setup and cleanup
+# Packages "devscripts" and "equivs" are required for "mk-build-deps".
+AVD_REQUIRED_PKGS = [
+    "devscripts", "equivs", "libvirt-clients", "libvirt-daemon-system"]
+BASE_REQUIRED_PKGS = ["ssvnc", "lzop", "python3-tk"]
+CUTTLEFISH_COMMOM_PKG = "cuttlefish-common"

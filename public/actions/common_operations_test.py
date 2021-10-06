@@ -18,7 +18,6 @@
 from __future__ import absolute_import
 from __future__ import division
 
-import shlex
 import unittest
 
 from unittest import mock
@@ -88,8 +87,9 @@ class CommonOperationsTest(driver_test_lib.BaseDriverTest):
         cfg.zone = "fake_zone"
         cfg.disk_image_name = "fake_image.tar.gz"
         cfg.disk_image_mime_type = "fake/type"
-        cfg.ssh_private_key_path = ""
+        cfg.ssh_private_key_path = "cfg/private/key"
         cfg.ssh_public_key_path = ""
+        cfg.extra_args_ssh_tunnel="extra args"
         return cfg
 
     def testDevicePoolCreateDevices(self):
@@ -120,15 +120,21 @@ class CommonOperationsTest(driver_test_lib.BaseDriverTest):
 
     def testCreateDevicesWithAdbPort(self):
         """Test Create Devices with adb port for cuttlefish avd type."""
-        self.Patch(utils, "_ExecuteCommand")
-        self.Patch(utils, "PickFreePort", return_value=56789)
-        self.Patch(shlex, "split", return_value=[])
+        forwarded_ports = mock.Mock(adb_port=12345, vnc_port=56789)
+        mock_auto_connect = self.Patch(utils, "AutoConnect",
+                                       return_value=forwarded_ports)
         cfg = self._CreateCfg()
         _report = common_operations.CreateDevices(self.CMD, cfg,
                                                   self.device_factory, 1,
                                                   "cuttlefish",
                                                   autoconnect=True,
                                                   client_adb_port=12345)
+
+        mock_auto_connect.assert_called_with(
+            ip_addr="127.0.0.1", rsa_key_file="cfg/private/key",
+            target_vnc_port=6444, target_adb_port=6520,
+            ssh_user=constants.GCE_USER, client_adb_port=12345,
+            extra_args_ssh_tunnel="extra args")
         self.assertEqual(_report.command, self.CMD)
         self.assertEqual(_report.status, report.Status.SUCCESS)
         self.assertEqual(
@@ -165,6 +171,29 @@ class CommonOperationsTest(driver_test_lib.BaseDriverTest):
                 "gcs_bucket_build_id": self.BUILD_ID,
             }]})
 
+    def testCreateDevicesWithSshParameters(self):
+        """Test Create Devices with ssh user and key."""
+        forwarded_ports = mock.Mock(adb_port=12345, vnc_port=56789)
+        mock_auto_connect = self.Patch(utils, "AutoConnect",
+                                       return_value=forwarded_ports)
+        mock_establish_webrtc = self.Patch(utils, "EstablishWebRTCSshTunnel")
+        self.Patch(utils, "PickFreePort", return_value=12345)
+        cfg = self._CreateCfg()
+        _report = common_operations.CreateDevices(
+            self.CMD, cfg, self.device_factory, 1, constants.TYPE_CF,
+            autoconnect=True, connect_webrtc=True,
+            ssh_user="user", ssh_private_key_path="private/key")
+
+        mock_auto_connect.assert_called_with(
+            ip_addr="127.0.0.1", rsa_key_file="private/key",
+            target_vnc_port=6444, target_adb_port=6520, ssh_user="user",
+            client_adb_port=None, extra_args_ssh_tunnel="extra args")
+        mock_establish_webrtc.assert_called_with(
+            ip_addr="127.0.0.1", rsa_key_file="private/key",
+            ssh_user="user", extra_args_ssh_tunnel="extra args",
+            webrtc_local_port=12345)
+        self.assertEqual(_report.status, report.Status.SUCCESS)
+
     def testGetErrorType(self):
         """Test GetErrorType."""
         # Test with CheckGCEZonesQuotaError()
@@ -189,6 +218,10 @@ class CommonOperationsTest(driver_test_lib.BaseDriverTest):
 
         # Test with error message about GCE quota issue
         error = errors.DriverError("Quota exceeded for quota read group.")
+        expected_result = constants.GCE_QUOTA_ERROR
+        self.assertEqual(common_operations._GetErrorType(error), expected_result)
+
+        error = errors.DriverError("ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS")
         expected_result = constants.GCE_QUOTA_ERROR
         self.assertEqual(common_operations._GetErrorType(error), expected_result)
 
