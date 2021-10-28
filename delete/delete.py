@@ -27,6 +27,8 @@ from acloud import errors
 from acloud.internal import constants
 from acloud.internal.lib import auth
 from acloud.internal.lib import cvd_compute_client_multi_stage
+from acloud.internal.lib import emulator_console
+from acloud.internal.lib import goldfish_remote_host_client
 from acloud.internal.lib import oxygen_client
 from acloud.internal.lib import ssh as ssh_object
 from acloud.internal.lib import utils
@@ -42,6 +44,8 @@ _COMMAND_GET_PROCESS_ID = ["pgrep", "run_cvd"]
 _COMMAND_GET_PROCESS_COMMAND = ["ps", "-o", "command", "-p"]
 _RE_RUN_CVD = re.compile(r"^(?P<run_cvd>.+run_cvd)")
 _LOCAL_INSTANCE_PREFIX = "local-"
+_RE_OXYGEN_RELEASE_ERROR = re.compile(
+    r".*Error received while trying to release device: (?P<error>.*)$", re.DOTALL)
 
 
 def DeleteInstances(cfg, instances_to_delete):
@@ -220,8 +224,48 @@ def ResetLocalInstanceLockByName(name, delete_report):
         ins_lock.Unlock()
 
 
+@utils.TimeExecute(function_description=("Deleting remote host goldfish "
+                                         "instance"),
+                   result_evaluator=utils.ReportEvaluator)
+def DeleteHostGoldfishInstance(cfg, name, ssh_user,
+                               ssh_private_key_path, delete_report):
+    """Delete a goldfish instance on a remote host by console command.
+
+    Args:
+        cfg: An AcloudConfig object.
+        name: String, the instance name.
+        remote_host : String, the IP address of the host.
+        ssh_user: String or None, the ssh user for the host.
+        ssh_private_key_path: String or None, the ssh private key for the host.
+        delete_report: A Report object.
+
+    Returns:
+        delete_report.
+    """
+    ip_addr, port = goldfish_remote_host_client.ParseEmulatorConsoleAddress(
+        name)
+    try:
+        with emulator_console.RemoteEmulatorConsole(
+                ip_addr, port,
+                (ssh_user or constants.GCE_USER),
+                (ssh_private_key_path or cfg.ssh_private_key_path),
+                cfg.extra_args_ssh_tunnel) as console:
+            console.Kill()
+        delete_report.SetStatus(report.Status.SUCCESS)
+        device_driver.AddDeletionResultToReport(
+            delete_report, [name], failed=[], error_msgs=[],
+            resource_name="instance")
+    except errors.DeviceConnectionError as e:
+        delete_report.AddError("%s is not deleted: %s" % (name, str(e)))
+        delete_report.SetStatus(report.Status.FAIL)
+    return delete_report
+
+
+@utils.TimeExecute(function_description=("Deleting remote host cuttlefish "
+                                         "instance"),
+                   result_evaluator=utils.ReportEvaluator)
 def CleanUpRemoteHost(cfg, remote_host, host_user,
-                      host_ssh_private_key_path=None):
+                      host_ssh_private_key_path, delete_report):
     """Clean up the remote host.
 
     Args:
@@ -230,11 +274,11 @@ def CleanUpRemoteHost(cfg, remote_host, host_user,
         host_user: String of user login into the instance.
         host_ssh_private_key_path: String of host key for logging in to the
                                    host.
+        delete_report: A Report object.
 
     Returns:
-        A Report instance.
+        delete_report.
     """
-    delete_report = report.Report(command="delete")
     credentials = auth.CreateCredentials(cfg)
     compute_client = cvd_compute_client_multi_stage.CvdComputeClient(
         acloud_config=cfg,
@@ -254,16 +298,26 @@ def CleanUpRemoteHost(cfg, remote_host, host_user,
     except subprocess.CalledProcessError as e:
         delete_report.AddError(str(e))
         delete_report.SetStatus(report.Status.FAIL)
-
     return delete_report
 
 
-def DeleteInstanceByNames(cfg, instances):
-    """Delete instances by the names of these instances.
+def DeleteInstanceByNames(cfg, instances, host_user,
+                          host_ssh_private_key_path):
+    """Delete instances by the given instance names.
+
+    This method can identify the following types of instance names:
+    local cuttlefish instance: local-instance-<id>
+    local goldfish instance: local-goldfish-instance-<id>
+    remote host cuttlefish instance: host-<ip_addr>-<build_info>
+    remote host goldfish instance: host-goldfish-<ip_addr>-<port>-<build_info>
+    remote instance: ins-<uuid>-<build_info>
 
     Args:
         cfg: AcloudConfig object.
         instances: List of instance name.
+        host_user: String or None, the ssh user for remote hosts.
+        host_ssh_private_key_path: String or None, the ssh private key for
+                                   remote hosts.
 
     Returns:
         A Report instance.
@@ -271,7 +325,15 @@ def DeleteInstanceByNames(cfg, instances):
     delete_report = report.Report(command="delete")
     local_names = set(name for name in instances if
                       name.startswith(_LOCAL_INSTANCE_PREFIX))
-    remote_names = list(set(instances) - set(local_names))
+    remote_host_cf_names = set(
+        name for name in instances if
+        cvd_compute_client_multi_stage.CvdComputeClient.ParseRemoteHostAddress(name))
+    remote_host_gf_names = set(
+        name for name in instances if
+        goldfish_remote_host_client.ParseEmulatorConsoleAddress(name))
+    remote_names = list(set(instances) - local_names - remote_host_cf_names -
+                        remote_host_gf_names)
+
     if local_names:
         active_instances = list_instances.GetLocalInstancesByNames(local_names)
         inactive_names = local_names.difference(ins.name for ins in
@@ -283,6 +345,19 @@ def DeleteInstanceByNames(cfg, instances):
             utils.PrintColorString("Unlocking local instances")
             for name in inactive_names:
                 ResetLocalInstanceLockByName(name, delete_report)
+
+    if remote_host_cf_names:
+        for name in remote_host_cf_names:
+            ip_addr = cvd_compute_client_multi_stage.CvdComputeClient.ParseRemoteHostAddress(
+                name)
+            CleanUpRemoteHost(cfg, ip_addr, host_user,
+                              host_ssh_private_key_path, delete_report)
+
+    if remote_host_gf_names:
+        for name in remote_host_gf_names:
+            DeleteHostGoldfishInstance(
+                cfg, name, host_user, host_ssh_private_key_path, delete_report)
+
     if remote_names:
         delete_report = DeleteRemoteInstances(cfg, remote_names, delete_report)
     return delete_report
@@ -314,7 +389,14 @@ def _ReleaseOxygenDevice(cfg, instances, ip):
             error_msgs=[],
             resource_name="instance")
     except subprocess.CalledProcessError as e:
-        delete_report.AddError(str(e))
+        logger.error("Failed to release device from Oxygen, error: %s",
+            e.output)
+        error = str(e)
+        match = _RE_OXYGEN_RELEASE_ERROR.match(e.output)
+        if match:
+            error = match.group("error").strip()
+        delete_report.AddError(error)
+        delete_report.SetErrorType(constants.ACLOUD_OXYGEN_RELEASE_ERROR)
         delete_report.SetStatus(report.Status.FAIL)
     return delete_report
 
@@ -338,10 +420,14 @@ def Run(args):
         return _ReleaseOxygenDevice(cfg, args.instance_names, args.ip)
     if args.instance_names:
         return DeleteInstanceByNames(cfg,
-                                     args.instance_names)
+                                     args.instance_names,
+                                     args.host_user,
+                                     args.host_ssh_private_key_path)
     if args.remote_host:
-        return CleanUpRemoteHost(cfg, args.remote_host, args.host_user,
-                                 args.host_ssh_private_key_path)
+        delete_report = report.Report(command="delete")
+        CleanUpRemoteHost(cfg, args.remote_host, args.host_user,
+                          args.host_ssh_private_key_path, delete_report)
+        return delete_report
 
     instances = list_instances.GetLocalInstances()
     if not args.local_only and cfg.SupportRemoteInstance():

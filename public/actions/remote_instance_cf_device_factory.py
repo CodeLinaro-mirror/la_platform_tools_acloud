@@ -118,9 +118,8 @@ class RemoteInstanceDeviceFactory(gce_device_factory.GCEDeviceFactory):
         if self._avd_spec.image_source == constants.IMAGE_SRC_REMOTE:
             build_id = self._avd_spec.remote_image[constants.BUILD_ID]
 
-        instance = "%s-%s-%s-%s" % (constants.INSTANCE_TYPE_HOST,
-                                    self._avd_spec.remote_host,
-                                    build_id, build_target)
+        instance = self._compute_client.FormatRemoteHostInstanceName(
+            self._avd_spec.remote_host, build_id, build_target)
         ip = ssh.IP(ip=self._avd_spec.remote_host)
         self._ssh = ssh.Ssh(
             ip=ip,
@@ -220,6 +219,9 @@ class RemoteInstanceDeviceFactory(gce_device_factory.GCEDeviceFactory):
         elif image_source == constants.IMAGE_SRC_REMOTE:
             self._compute_client.UpdateFetchCvd()
             self._FetchBuild(self._avd_spec)
+
+        if self._avd_spec.connect_webrtc:
+            self._compute_client.UpdateCertificate()
 
     def _FetchBuild(self, avd_spec):
         """Download CF artifacts from android build.

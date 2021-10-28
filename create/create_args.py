@@ -113,7 +113,8 @@ def AddCommonCreateArgs(parser):
         dest="boot_timeout_secs",
         type=int,
         required=False,
-        help="The maximum time in seconds used to wait for the AVD to boot.")
+        help="The maximum time in seconds used to wait for the AVD to download "
+             "artifacts and boot.")
     parser.add_argument(
         "--wait-for-ins-stable",
         dest="ins_timeout_secs",
@@ -514,15 +515,19 @@ def GetCreateArgParser(subparser):
         help="The name of a pre-configured device spec that we are "
         "going to use.")
     # Arguments for goldfish type.
-    # TODO(b/118439885): Verify args that are used in wrong avd_type.
-    # e.g. $acloud create --avd-type cuttlefish --emulator-build-id
     create_parser.add_argument(
         "--emulator-build-id",
         type=int,
         dest="emulator_build_id",
         required=False,
-        help="'goldfish only' Emulator build used to run the images. "
+        help="'goldfish only' Emulator build ID used to run the images. "
         "e.g. 4669466.")
+    create_parser.add_argument(
+        "--emulator-build-target",
+        dest="emulator_build_target",
+        required=False,
+        help="'goldfish remote host only' Emulator build target used to run "
+        "the images. e.g. sdk_tools_linux.")
 
     # Arguments for cheeps type.
     create_parser.add_argument(
@@ -651,6 +656,27 @@ def _VerifyHostArgs(args):
             "--host-ssh-private-key-path only support for remote host.")
 
 
+def _VerifyGoldfishArgs(args):
+    """Verify goldfish args.
+
+    Args:
+        args: Namespace object from argparse.parse_args.
+
+    Raises:
+        errors.UnsupportedCreateArgs: When a create arg is specified but
+                                      unsupported for goldfish.
+    """
+    goldfish_only_flags = [args.emulator_build_id, args.emulator_build_target]
+    if args.avd_type != constants.TYPE_GF and any(goldfish_only_flags):
+        raise errors.UnsupportedCreateArgs(
+            "--emulator-* are only valid with avd_type == %s" %
+            constants.TYPE_GF)
+
+    if args.emulator_build_target and args.remote_host is None:
+        raise errors.UnsupportedCreateArgs(
+            "--emulator-build-target is only supported for remote host.")
+
+
 def VerifyArgs(args):
     """Verify args.
 
@@ -714,5 +740,6 @@ def VerifyArgs(args):
         raise ValueError("--no-autoconnect and --unlock couldn't be "
                          "passed in together.")
 
+    _VerifyGoldfishArgs(args)
     _VerifyLocalArgs(args)
     _VerifyHostArgs(args)

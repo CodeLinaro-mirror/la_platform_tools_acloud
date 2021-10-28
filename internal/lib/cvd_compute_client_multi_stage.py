@@ -77,6 +77,15 @@ _NO_RETRY = 0
 # Launch cvd command for acloud report
 _LAUNCH_CVD_COMMAND = "launch_cvd_command"
 _CONFIG_RE = re.compile(r"^config=(?P<config>.+)")
+# Trust local certificates command for webrtc
+_TRUST_REMOTE_INSTANCE_COMMAND = (
+    "\"export CAROOT=%(webrtc_certs_path)s; "
+    "./%(webrtc_certs_path)s/mkcert -install;\"")
+# Remote host instance name
+_HOST_INSTANCE_NAME_FORMAT = (constants.INSTANCE_TYPE_HOST +
+                              "-%(ip_addr)s-%(build_id)s-%(build_target)s")
+_HOST_INSTANCE_NAME_PATTERN = re.compile(constants.INSTANCE_TYPE_HOST +
+                                         r"-(?P<ip_addr>[\d.]+)-.+")
 
 
 class CvdComputeClient(android_compute_client.AndroidComputeClient):
@@ -124,6 +133,37 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
         self._user = constants.GCE_USER
         self._stage = constants.STAGE_INIT
         self._execution_time = {_FETCH_ARTIFACT: 0, _GCE_CREATE: 0, _LAUNCH_CVD: 0}
+
+    @staticmethod
+    def FormatRemoteHostInstanceName(ip_addr, build_id, build_target):
+        """Convert an IP address and build info to an instance name.
+
+        Args:
+            ip_addr: String, the IP address of the remote host.
+            build_id: String, the build id.
+            build_target: String, the build target, e.g., aosp_cf_x86_64_phone.
+
+        Return:
+            String, the instance name.
+        """
+        return _HOST_INSTANCE_NAME_FORMAT % {
+            "ip_addr": ip_addr,
+            "build_id": build_id,
+            "build_target": build_target}
+
+    @staticmethod
+    def ParseRemoteHostAddress(instance_name):
+        """Parse IP address from a remote host instance name.
+
+        Args:
+            instance_name: String, the instance name.
+
+        Returns:
+            The IP address as a string.
+            None if the name does not represent a remote host instance.
+        """
+        match = _HOST_INSTANCE_NAME_PATTERN.fullmatch(instance_name)
+        return match.group("ip_addr") if match else None
 
     def InitRemoteHost(self, ssh, ip, user):
         """Init remote host.
@@ -359,6 +399,7 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
         launch_cvd_args.append(_AGREEMENT_PROMPT_ARG)
         return launch_cvd_args
 
+    # pylint: disable=broad-except
     def StopCvd(self):
         """Stop CVD.
 
@@ -368,7 +409,7 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
         ssh_command = "./bin/stop_cvd"
         try:
             self._ssh.Run(ssh_command)
-        except subprocess.CalledProcessError as e:
+        except Exception as e:
             logger.debug("Failed to stop_cvd (possibly no running device): %s", e)
 
     def CleanUp(self):
@@ -415,7 +456,8 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
                                                  blank_data_disk_size_gb,
                                                  decompress_kernel,
                                                  instance)
-        boot_timeout_secs = boot_timeout_secs or constants.DEFAULT_CF_BOOT_TIMEOUT
+        boot_timeout_secs = self._GetBootTimeout(
+            boot_timeout_secs or constants.DEFAULT_CF_BOOT_TIMEOUT)
         ssh_command = "./bin/launch_cvd -daemon " + " ".join(launch_cvd_args)
         try:
             self.ExtendReportData(_LAUNCH_CVD_COMMAND, ssh_command)
@@ -432,6 +474,24 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
 
         self._execution_time[_LAUNCH_CVD] = round(time.time() - timestart, 2)
         return {instance: error_msg} if error_msg else {}
+
+
+    def _GetBootTimeout(self, timeout_secs):
+        """Get boot timeout.
+
+        Timeout settings includes download artifacts and boot up.
+
+        Args:
+            timeout_secs: integer of timeout value.
+
+        Returns:
+            The timeout values for device boots up.
+        """
+        boot_timeout_secs = timeout_secs - self._execution_time[_FETCH_ARTIFACT]
+        logger.debug("Timeout for boot: %s secs", boot_timeout_secs)
+        if boot_timeout_secs < 0:
+            return 0
+        return boot_timeout_secs
 
     def _PullAllLogFiles(self, instance):
         """Pull all log files from instance.
@@ -577,6 +637,32 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
         self._ssh.Run("./fetch_cvd " + " ".join(fetch_cvd_args),
                       timeout=constants.DEFAULT_SSH_TIMEOUT)
         self._execution_time[_FETCH_ARTIFACT] = round(time.time() - timestart, 2)
+
+    @utils.TimeExecute(function_description="Update instance's certificates")
+    def UpdateCertificate(self):
+        """Update webrtc default certificates of the remote instance.
+
+        For trusting both the localhost and remote instance, the process will
+        upload certificates(rootCA.pem, server.crt, server.key) and the mkcert
+        tool from the client workstation to remote instance where running the
+        mkcert with the uploaded rootCA file and replace the webrtc frontend
+        default certificates for connecting to a remote webrtc AVD without the
+        insecure warning.
+        """
+        mkcert_install_dir = os.path.join(os.path.expanduser("~"),
+                                          constants.MKCERT_INSTALL_DIR)
+        if os.path.exists(os.path.join(mkcert_install_dir, "mkcert")):
+            utils.AllocateLocalHostCert(mkcert_install_dir)
+            mkcert_rootca_dir = utils.CheckOutput(
+                "%s/mkcert -CAROOT" % mkcert_install_dir,
+                shell=True).rstrip("\n")
+            upload_files = [os.path.join(mkcert_rootca_dir, "rootCA.pem")]
+            for cert_file in constants.WEBRTC_CERTS_FILES + ["mkcert"]:
+                upload_files.append(os.path.join(mkcert_install_dir,
+                                                 cert_file))
+            self._ssh.ScpPushFiles(upload_files, constants.WEBRTC_CERTS_PATH)
+            self._ssh.Run(_TRUST_REMOTE_INSTANCE_COMMAND % {
+                "webrtc_certs_path": constants.WEBRTC_CERTS_PATH})
 
     def GetInstanceIP(self, instance=None):
         """Override method from parent class.

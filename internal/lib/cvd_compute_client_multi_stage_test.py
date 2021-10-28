@@ -61,6 +61,8 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
     EXTRA_SCOPES = ["scope1"]
     GPU = "fake-gpu"
     FAKE_IP = IP(external="1.1.1.1", internal="10.1.1.1")
+    REMOTE_HOST_IP = "192.0.2.1"
+    REMOTE_HOST_INSTANCE_NAME = "host-192.0.2.1-2263051-aosp_cf_x86_64_phone"
 
     def _GetFakeConfig(self):
         """Create a fake configuration object.
@@ -233,6 +235,22 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
             tags=None,
             disable_external_ip=False)
 
+    def testFormatRemoteHostInstanceName(self):
+        """Test FormatRemoteHostInstanceName."""
+        name = self.cvd_compute_client_multi_stage.FormatRemoteHostInstanceName(
+            self.REMOTE_HOST_IP, self.BUILD_ID, self.TARGET.split("-")[0])
+        self.assertEqual(name, self.REMOTE_HOST_INSTANCE_NAME)
+
+    def testParseRemoteHostAddress(self):
+        """Test ParseRemoteHostAddress."""
+        ip_addr = self.cvd_compute_client_multi_stage.ParseRemoteHostAddress(
+            self.REMOTE_HOST_INSTANCE_NAME)
+        self.assertEqual(ip_addr, self.REMOTE_HOST_IP)
+
+        ip_addr = self.cvd_compute_client_multi_stage.ParseRemoteHostAddress(
+            "host-goldfish-192.0.2.1-5554-123456-sdk_x86_64-sdk")
+        self.assertIsNone(ip_addr)
+
     def testRecordBuildInfo(self):
         """Test RecordBuildInfo"""
         build_id = "build_id"
@@ -284,6 +302,44 @@ class CvdComputeClientTest(driver_test_lib.BaseDriverTest):
         self.assertEqual(
             self.cvd_compute_client_multi_stage._GetConfigFromAndroidInfo(),
             expected)
+
+    @mock.patch.object(Ssh, "Run")
+    @mock.patch.object(Ssh, "ScpPushFiles")
+    @mock.patch.object(utils, "AllocateLocalHostCert")
+    def testUpdateCertificate(self, mock_allocateca, mock_upload,
+                              mock_trustremote):
+        """Test UpdateCertificate"""
+        self.Patch(os, "makedirs")
+        self.Patch(utils, "CheckOutput", return_value="rootca_path")
+        # mkcert is not exist
+        self.Patch(os.path, "exists", return_value=False)
+        self.cvd_compute_client_multi_stage.UpdateCertificate()
+        self.assertEqual(mock_allocateca.call_count, 0)
+        self.assertEqual(mock_upload.call_count, 0)
+        self.assertEqual(mock_trustremote.call_count, 0)
+
+        # mkcert is exist
+        self.Patch(os.path, "exists", return_value=True)
+        mkcert_install_dir = os.path.join(os.path.expanduser("~"),
+                                          constants.MKCERT_INSTALL_DIR)
+        self.cvd_compute_client_multi_stage.UpdateCertificate()
+        mock_allocateca.assert_called_once()
+        mock_upload.assert_called_once_with(
+            ["rootca_path/rootCA.pem",
+             "%s/server.crt" % mkcert_install_dir,
+             "%s/server.key" % mkcert_install_dir,
+             "%s/mkcert" % mkcert_install_dir], constants.WEBRTC_CERTS_PATH)
+        mock_trustremote.assert_called_once()
+
+    def testGetBootTimeout(self):
+        """Test GetBootTimeout"""
+        self.cvd_compute_client_multi_stage._execution_time = {
+            "fetch_artifact_time": 100}
+        self.assertEqual(
+            400, self.cvd_compute_client_multi_stage._GetBootTimeout(500))
+
+        self.assertEqual(
+            0, self.cvd_compute_client_multi_stage._GetBootTimeout(50))
 
 
 if __name__ == "__main__":

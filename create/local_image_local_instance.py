@@ -85,21 +85,18 @@ _TARGET_FILES_IMAGES_DIR_NAME = "IMAGES"
 _TARGET_FILES_META_DIR_NAME = "META"
 _MIXED_SUPER_IMAGE_NAME = "mixed_super.img"
 _CMD_LAUNCH_CVD_ARGS = (
-    " -daemon -config=%s -run_adb_connector=%s "
-    "-system_image_dir %s -instance_dir %s "
-    "-undefok=report_anonymous_usage_stats,enable_sandbox,config "
-    "-report_anonymous_usage_stats=y "
-    "-enable_sandbox=false")
+    " -daemon -config=%s -system_image_dir %s -instance_dir %s "
+    "-undefok=report_anonymous_usage_stats,config "
+    "-report_anonymous_usage_stats=y")
 _CMD_LAUNCH_CVD_HW_ARGS = " -cpus %s -x_res %s -y_res %s -dpi %s -memory_mb %s"
-_CMD_LAUNCH_CVD_DISK_ARGS = (" -blank_data_image_mb %s "
-                             "-data_policy always_create")
-_CMD_LAUNCH_CVD_WEBRTC_ARGS = (" -guest_enforce_security=false "
-                               "-vm_manager=crosvm "
-                               "-start_webrtc=true "
-                               "-webrtc_public_ip=%s" % constants.LOCALHOST)
+_CMD_LAUNCH_CVD_DISK_ARGS = (
+    " -blank_data_image_mb %s -data_policy always_create")
+_CMD_LAUNCH_CVD_WEBRTC_ARGS = (
+    " -guest_enforce_security=false -start_webrtc=true")
 _CMD_LAUNCH_CVD_VNC_ARG = " -start_vnc_server=true"
 _CMD_LAUNCH_CVD_SUPER_IMAGE_ARG = " -super_image=%s"
 _CMD_LAUNCH_CVD_BOOT_IMAGE_ARG = " -boot_image=%s"
+_CMD_LAUNCH_CVD_NO_ADB_ARG = " -run_adb_connector=false"
 _CONFIG_RE = re.compile(r"^config=(?P<config>.+)")
 _MAX_REPORTED_ERROR_LINES = 10
 
@@ -480,7 +477,7 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
             String, launch_cvd cmd.
         """
         launch_cvd_w_args = launch_cvd_path + _CMD_LAUNCH_CVD_ARGS % (
-            config, ("true" if connect_adb else "false"), image_dir, runtime_dir)
+            config, image_dir, runtime_dir)
         if hw_property:
             launch_cvd_w_args = launch_cvd_w_args + _CMD_LAUNCH_CVD_HW_ARGS % (
                 hw_property["cpu"], hw_property["x_res"], hw_property["y_res"],
@@ -488,6 +485,10 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
             if constants.HW_ALIAS_DISK in hw_property:
                 launch_cvd_w_args = (launch_cvd_w_args + _CMD_LAUNCH_CVD_DISK_ARGS %
                                      hw_property[constants.HW_ALIAS_DISK])
+
+        if not connect_adb:
+            launch_cvd_w_args = launch_cvd_w_args + _CMD_LAUNCH_CVD_NO_ADB_ARG
+
         if connect_webrtc:
             launch_cvd_w_args = launch_cvd_w_args + _CMD_LAUNCH_CVD_WEBRTC_ARGS
 
@@ -543,15 +544,14 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
         """
         webrtc_certs_dir = os.path.join(host_bins_path,
                                         constants.WEBRTC_CERTS_PATH)
-        local_ca_dir = os.path.join(os.path.expanduser("~"), ".config",
-                                    constants.TOOL_NAME, "mkcert")
-        if os.path.exists(os.path.join(local_ca_dir, "mkcert")):
-            create_common.AllocateLocalHostCert(local_ca_dir)
+        mkcert_install_dir = os.path.join(os.path.expanduser("~"),
+                                    constants.MKCERT_INSTALL_DIR)
+        if os.path.exists(os.path.join(mkcert_install_dir, "mkcert")):
+            utils.AllocateLocalHostCert(mkcert_install_dir)
             for cert_file_name in constants.WEBRTC_CERTS_FILES:
-                shutil.copyfile(os.path.join(local_ca_dir, cert_file_name),
-                                os.path.join(webrtc_certs_dir, cert_file_name))
-        else:
-            logger.debug("mkcert tool did not exist in the %s", local_ca_dir)
+                shutil.copyfile(
+                    os.path.join(mkcert_install_dir, cert_file_name),
+                    os.path.join(webrtc_certs_dir, cert_file_name))
 
     @staticmethod
     def _CheckRunningCvd(local_instance_id, no_prompts=False):
@@ -604,7 +604,7 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
             proc = subprocess.Popen(cmd, shell=True, env=cvd_env,
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE,
-                                    text=True)
+                                    text=True, cwd=host_bins_path)
             stdout, stderr = proc.communicate(timeout=timeout)
             if proc.returncode == 0:
                 logger.info("launch_cvd stdout:\n%s", stdout)

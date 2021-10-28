@@ -25,8 +25,10 @@ import getpass
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
+import re
 
 from acloud.internal import constants
 from acloud.internal.lib import utils
@@ -36,12 +38,10 @@ from acloud.setup import setup_common
 
 logger = logging.getLogger(__name__)
 
-# Packages "devscripts" and "equivs" are required for "mk-build-deps".
-_AVD_REQUIRED_PKGS = [
-    "devscripts", "equivs", "libvirt-clients", "libvirt-daemon-system"]
-_BASE_REQUIRED_PKGS = ["ssvnc", "lzop", "python3-tk"]
-_CUTTLEFISH_COMMOM_PKG = "cuttlefish-common"
 _CF_COMMOM_FOLDER = "cf-common"
+_CHECK_KVM_CMD = "virt-host-validate"
+_CHECK_KVM_PATTERN = r".*:.Checking for hardware virtualization.*PASS\n"
+
 _LIST_OF_MODULES = ["kvm_intel", "kvm"]
 _UPDATE_APT_GET_CMD = "sudo apt-get update"
 _INSTALL_CUTTLEFISH_COMMOM_CMD = [
@@ -61,9 +61,6 @@ _MKCERT_DOWNLOAD_CMD = ("wget -O %(mkcert_install_path)s/mkcert "
                         {"mkcert_install_path": _MKCERT_INSTALL_PATH,
                          "mkcert_url": _MKCERT_URL,
                          "mkcert_ver": _MKCERT_VERSION})
-_INSTALL_MKCERT_CMD = [
-    "sudo apt-get install wget libnss3-tools",
-    _MKCERT_DOWNLOAD_CMD]
 
 
 class BasePkgInstaller(base_task_runner.BaseTaskRunner):
@@ -116,7 +113,7 @@ class AvdPkgInstaller(BasePkgInstaller):
     WELCOME_MESSAGE = ("This step will walk you through the required packages "
                        "installation for running Android cuttlefish devices "
                        "on your host.")
-    PACKAGES = _AVD_REQUIRED_PKGS
+    PACKAGES = constants.AVD_REQUIRED_PKGS
 
 
 class HostBasePkgInstaller(BasePkgInstaller):
@@ -125,7 +122,7 @@ class HostBasePkgInstaller(BasePkgInstaller):
     WELCOME_MESSAGE_TITLE = "Install base packages on the host"
     WELCOME_MESSAGE = ("This step will walk you through the base packages "
                        "installation for your host.")
-    PACKAGES = _BASE_REQUIRED_PKGS
+    PACKAGES = constants.BASE_REQUIRED_PKGS
 
 
 class CuttlefishCommonPkgInstaller(base_task_runner.BaseTaskRunner):
@@ -146,7 +143,7 @@ class CuttlefishCommonPkgInstaller(base_task_runner.BaseTaskRunner):
 
         # Any required package is not installed or not up-to-date will need to
         # run installation task.
-        if not setup_common.PackageInstalled(_CUTTLEFISH_COMMOM_PKG):
+        if not setup_common.PackageInstalled(constants.CUTTLEFISH_COMMOM_PKG):
             return True
         return False
 
@@ -191,16 +188,14 @@ class MkcertPkgInstaller(base_task_runner.BaseTaskRunner):
 
     def _Run(self):
         """Install mkcert packages."""
-        cmd = "\n".join(_INSTALL_MKCERT_CMD)
-
         if not utils.GetUserAnswerYes("\nStart to install mkcert :\n%s"
                                       "\nEnter 'y' to continue, otherwise N or "
-                                      "enter to exit: " % cmd):
+                                      "enter to exit: " % _MKCERT_DOWNLOAD_CMD):
             sys.exit(constants.EXIT_BY_USER)
 
         if not os.path.isdir(_MKCERT_INSTALL_PATH):
             os.mkdir(_MKCERT_INSTALL_PATH)
-        setup_common.CheckCmdOutput(cmd, shell=True)
+        setup_common.CheckCmdOutput(_MKCERT_DOWNLOAD_CMD, shell=True)
         utils.SetExecutable(os.path.join(_MKCERT_INSTALL_PATH, "mkcert"))
         utils.CheckOutput(_MKCERT_CAROOT_CMD, shell=True)
         logger.info("Mkcert package is installed at \"%s\" now.",
@@ -248,8 +243,33 @@ class CuttlefishHostSetup(base_task_runner.BaseTaskRunner):
                 all_modules_present = False
         return all_modules_present
 
+    @staticmethod
+    def _IsSupportedKvm():
+        """Check if support kvm.
+
+        Returns:
+            True if environment supported kvm.
+        """
+        process = subprocess.Popen([_CHECK_KVM_CMD],
+                                   stdout=subprocess.PIPE,
+                                   universal_newlines=True)
+        stdout, _ = process.communicate()
+        re_pattern = re.compile(_CHECK_KVM_PATTERN)
+        if re_pattern.match(stdout):
+            return True
+
+        utils.PrintColorString(
+            "The environment doesn't support virtualization. If you want to "
+            "launch AVD on the local instance, Please refer to http://go/"
+            "acloud-cloudtop#acloud-create-local-instance-on-the-cloudtop ",
+            utils.TextColors.FAIL)
+        return False
+
     def _Run(self):
         """Setup host environment for local cuttlefish instance support."""
+        if not self._IsSupportedKvm():
+            return
+
         # TODO: provide --uid args to let user use prefered username
         username = getpass.getuser()
         setup_cmds = [

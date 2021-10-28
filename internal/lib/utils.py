@@ -24,6 +24,7 @@ import grp
 import logging
 import os
 import platform
+import re
 import shlex
 import shutil
 import signal
@@ -65,10 +66,17 @@ _SSH_TUNNEL_ARGS = (
 PORT_MAPPING = "-L %(local_port)d:127.0.0.1:%(target_port)d "
 _RELEASE_PORT_CMD = "kill $(lsof -t -i :%d)"
 _WEBRTC_TARGET_PORT = 8443
-WEBRTC_PORTS_MAPPING = [{"local": constants.WEBRTC_LOCAL_PORT,
-                         "target": _WEBRTC_TARGET_PORT},
-                        {"local": 15550, "target": 15550},
-                        {"local": 15551, "target": 15551}]
+PortMapping = collections.namedtuple("PortMapping", ["local", "target"])
+WEBRTC_PORTS_MAPPING = [PortMapping(15550, 15550),
+                        PortMapping(15551, 15551)]
+# Use mkcert to generate a localhost certificates for webrtc
+_MKCERT_LOCAL_CERT_CMD = ("%(local_ca_dir)s/mkcert "
+                          "-key-file %(local_ca_dir)s/server.key "
+                          "-cert-file %(local_ca_dir)s/server.crt "
+                          "localhost 0.0.0.0 ::1")
+_RE_GROUP_WEBRTC = "local_webrtc_port"
+_RE_WEBRTC_SSH_TUNNEL_PATTERN = (
+    r"((.*-L\s)(?P<local_webrtc_port>\d+):127.0.0.1:%s)(.+%s)")
 _ADB_CONNECT_ARGS = "connect 127.0.0.1:%(adb_port)d"
 # Store the ports that vnc/adb are forwarded to, both are integers.
 ForwardedPorts = collections.namedtuple("ForwardedPorts", [constants.VNC_PORT,
@@ -783,9 +791,9 @@ def CheckPortFree(port):
     tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         tcp_socket.bind(("", port))
-    except socket.error:
+    except socket.error as port_error:
         raise errors.PortOccupied("Port (%d) is taken, please choose another "
-                                  "port." % port)
+                                  "port." % port) from port_error
     tcp_socket.close()
 
 
@@ -822,13 +830,9 @@ def ReleasePort(port):
         logger.debug("The port %d is available.", constants.WEBRTC_LOCAL_PORT)
 
 
-def EstablishWebRTCSshTunnel(ip_addr, rsa_key_file, ssh_user,
-                             extra_args_ssh_tunnel=None):
-    """Create ssh tunnels for webrtc.
-
-    # TODO(151418177): Before fully supporting webrtc feature, we establish one
-    # WebRTC tunnel at a time. so always delete the previous connection before
-    # establishing new one.
+def EstablishSshTunnel(ip_addr, rsa_key_file, ssh_user,
+                       port_mapping, extra_args_ssh_tunnel=None):
+    """Create an ssh tunnel.
 
     Args:
         ip_addr: String, use to build the adb & vnc tunnel between local
@@ -836,25 +840,90 @@ def EstablishWebRTCSshTunnel(ip_addr, rsa_key_file, ssh_user,
         rsa_key_file: String, Private key file path to use when creating
                       the ssh tunnels.
         ssh_user: String of user login into the instance.
+        port_mapping: List of tuples, each tuple is a pair of integers
+                      representing a local port and a remote port.
+        extra_args_ssh_tunnel: String, extra args for ssh tunnel connection.
+
+    Raises:
+        subprocess.CalledProcessError if the ssh command fails.
+    """
+    port_mapping = [PORT_MAPPING % {
+        "local_port": ports[0],
+        "target_port": ports[1]} for ports in port_mapping]
+    ssh_tunnel_args = _SSH_TUNNEL_ARGS % {
+        "rsa_key_file": rsa_key_file,
+        "ssh_user": ssh_user,
+        "ip_addr": ip_addr,
+        "port_mapping": " ".join(port_mapping)}
+    ssh_tunnel_args_list = shlex.split(ssh_tunnel_args)
+    if extra_args_ssh_tunnel:
+        ssh_tunnel_args_list.extend(shlex.split(extra_args_ssh_tunnel))
+    _ExecuteCommand(constants.SSH_BIN, ssh_tunnel_args_list)
+
+
+def EstablishWebRTCSshTunnel(ip_addr, webrtc_local_port, rsa_key_file, ssh_user,
+                             extra_args_ssh_tunnel=None):
+    """Create ssh tunnels for webrtc.
+
+    Pick up an available local port to establish one WebRTC tunnel and forward to
+    the port of the webrtc operator of the remote instance.
+
+    Args:
+        ip_addr: String, use to build the adb & vnc tunnel between local
+                 and remote instance.
+        webrtc_local_port: Integer, pick a free port as webrtc local port.
+        rsa_key_file: String, Private key file path to use when creating
+                      the ssh tunnels.
+        ssh_user: String of user login into the instance.
         extra_args_ssh_tunnel: String, extra args for ssh tunnel connection.
     """
-    ReleasePort(constants.WEBRTC_LOCAL_PORT)
+    port_mapping = (WEBRTC_PORTS_MAPPING +
+                    [PortMapping(webrtc_local_port, _WEBRTC_TARGET_PORT)])
     try:
-        port_mapping = [PORT_MAPPING % {
-            "local_port":port["local"],
-            "target_port":port["target"]} for port in WEBRTC_PORTS_MAPPING]
-        ssh_tunnel_args = _SSH_TUNNEL_ARGS % {
-            "rsa_key_file": rsa_key_file,
-            "ssh_user": ssh_user,
-            "ip_addr": ip_addr,
-            "port_mapping":" ".join(port_mapping)}
-        ssh_tunnel_args_list = shlex.split(ssh_tunnel_args)
-        if extra_args_ssh_tunnel is not None:
-            ssh_tunnel_args_list.extend(shlex.split(extra_args_ssh_tunnel))
-        _ExecuteCommand(constants.SSH_BIN, ssh_tunnel_args_list)
+        EstablishSshTunnel(ip_addr, rsa_key_file, ssh_user,
+                           port_mapping, extra_args_ssh_tunnel)
     except subprocess.CalledProcessError as e:
         PrintColorString("\n%s\nFailed to create ssh tunnels, retry with '#acloud "
                          "reconnect'." % e, TextColors.FAIL)
+
+def AllocateLocalHostCert(local_ca_dir):
+    """Allocate certificates of localhost by mkcert.
+
+    This will generate certificates by mkcert to trust webrtc frontend
+    if one of the required certificates do not exist.
+
+    Args:
+        local_ca_dir: String, a fixed path to store the certificates.
+    """
+    if not os.path.isdir(local_ca_dir):
+        os.makedirs(local_ca_dir)
+    cmd_mkcert = _MKCERT_LOCAL_CERT_CMD % {"local_ca_dir": local_ca_dir}
+    for cert_file_name in constants.WEBRTC_CERTS_FILES:
+        if not os.path.exists(os.path.join(local_ca_dir, cert_file_name)):
+            CheckOutput(cmd_mkcert, shell=True)
+            break
+
+
+def GetWebrtcPortFromSSHTunnel(ip):
+    """Get forwarding webrtc port from ssh tunnel.
+
+    Args:
+        ip: String, ip address.
+
+    Returns:
+        webrtc local port.
+    """
+    re_pattern = re.compile(_RE_WEBRTC_SSH_TUNNEL_PATTERN %
+                            (constants.WEBRTC_LOCAL_PORT, ip))
+    process_output = CheckOutput(constants.COMMAND_PS)
+    for line in process_output.splitlines():
+        match = re_pattern.match(line)
+        if match:
+            webrtc_port = int(match.group(_RE_GROUP_WEBRTC))
+            return webrtc_port
+
+    logger.debug("Can't get webrtc local port from ip %s.", ip)
+    return None
 
 
 # TODO(147337696): create ssh tunnels tear down as adb and vnc.
@@ -879,25 +948,14 @@ def AutoConnect(ip_addr, rsa_key_file, target_vnc_port, target_adb_port,
         integers.
     """
     local_adb_port = client_adb_port or PickFreePort()
-    port_mapping = [PORT_MAPPING % {
-        "local_port":local_adb_port,
-        "target_port":target_adb_port}]
+    port_mapping = [(local_adb_port, target_adb_port)]
     local_free_vnc_port = None
     if target_vnc_port:
         local_free_vnc_port = PickFreePort()
-        port_mapping += [PORT_MAPPING % {
-            "local_port":local_free_vnc_port,
-            "target_port":target_vnc_port}]
+        port_mapping.append((local_free_vnc_port, target_vnc_port))
     try:
-        ssh_tunnel_args = _SSH_TUNNEL_ARGS % {
-            "rsa_key_file": rsa_key_file,
-            "port_mapping": " ".join(port_mapping),
-            "ssh_user": ssh_user,
-            "ip_addr": ip_addr}
-        ssh_tunnel_args_list = shlex.split(ssh_tunnel_args)
-        if extra_args_ssh_tunnel is not None:
-            ssh_tunnel_args_list.extend(shlex.split(extra_args_ssh_tunnel))
-        _ExecuteCommand(constants.SSH_BIN, ssh_tunnel_args_list)
+        EstablishSshTunnel(ip_addr, rsa_key_file, ssh_user,
+                           port_mapping, extra_args_ssh_tunnel)
     except subprocess.CalledProcessError as e:
         PrintColorString("\n%s\nFailed to create ssh tunnels, retry with '#acloud "
                          "reconnect'." % e, TextColors.FAIL)
@@ -979,10 +1037,11 @@ def LaunchBrowserFromReport(report):
     Args:
         report: Report object, that stores and generates report.
     """
-    PrintColorString("(This is an experimental project for webrtc, and since "
-                     "the certificate is self-signed, Chrome will mark it as "
-                     "an insecure website. keep going.)",
-                     TextColors.WARNING)
+    if not os.path.exists(os.path.join(os.path.expanduser("~"),
+                                       constants.MKCERT_INSTALL_DIR, "mkcert")):
+        PrintColorString("(Since the certificate is self-signed, Chrome will "
+                         "mark it as an insecure website. keep going.)",
+                         TextColors.WARNING)
 
     for device in report.data.get("devices", []):
         if device.get("ip"):
@@ -1083,7 +1142,7 @@ def PrintDeviceSummary(report):
         PrintColorString(" - device serial: %s %s" % (adb_serial,
                                                       instance_details))
         PrintColorString("\n")
-        PrintColorString("Note: To ensure Tradefed use this AVD, please run:")
+        PrintColorString("Note: To ensure Tradefed uses this AVD, please run:")
         PrintColorString("\texport ANDROID_SERIAL=%s" % adb_serial)
 
     # TODO(b/117245508): Help user to delete instance if it got created.
@@ -1320,12 +1379,12 @@ def GetBuildEnvironmentVariable(variable_name):
     """
     try:
         return os.environ[variable_name]
-    except KeyError:
+    except KeyError as no_env_error:
         raise errors.GetAndroidBuildEnvVarError(
             "Could not get environment var: %s\n"
             "Try to run 'source build/envsetup.sh && lunch <target>'"
             % variable_name
-        )
+        ) from no_env_error
 
 
 # pylint: disable=no-member,import-outside-toplevel
