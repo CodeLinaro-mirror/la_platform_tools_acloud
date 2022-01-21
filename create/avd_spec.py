@@ -125,6 +125,7 @@ class AVDSpec():
         self._num_avds_per_instance = None
         self._no_pull_log = None
         self._oxygen = None
+        self._openwrt = None
         self._remote_image = None
         self._system_build_info = None
         self._kernel_build_info = None
@@ -139,6 +140,7 @@ class AVDSpec():
         self._gpu = None
         self._disk_type = None
         self._mkcert = None
+        self._stable_host_image_name = None
         # Create config instance for android_build_client to query build api.
         self._cfg = config.GetAcloudConfig(args)
         # Reporting args.
@@ -337,6 +339,7 @@ class AVDSpec():
         self._num_avds_per_instance = args.num_avds_per_instance
         self._no_pull_log = args.no_pull_log
         self._oxygen = args.oxygen
+        self._openwrt = args.openwrt
         self._serial_log_file = args.serial_log_file
         self._emulator_build_id = args.emulator_build_id
         self._emulator_build_target = args.emulator_build_target
@@ -344,6 +347,8 @@ class AVDSpec():
         self._disk_type = (args.disk_type or self._cfg.disk_type)
         self._gce_metadata = create_common.ParseKeyValuePairArgs(args.gce_metadata)
         self._mkcert = args.mkcert
+        self._stable_host_image_name = (
+            args.stable_host_image_name or self._cfg.stable_host_image_name)
 
         self._stable_cheeps_host_image_name = args.stable_cheeps_host_image_name
         self._stable_cheeps_host_image_project = args.stable_cheeps_host_image_project
@@ -576,11 +581,13 @@ class AVDSpec():
             self._flavor = args.flavor or self._GetFlavorFromString(
                 self._remote_image[constants.BUILD_TARGET]) or constants.FLAVOR_PHONE
             # infer avd_type from build_target.
-            for avd_type, avd_type_abbr in constants.AVD_TYPES_MAPPING.items():
-                if re.match(r"(.*_)?%s_" % avd_type_abbr,
-                            self._remote_image[constants.BUILD_TARGET]):
-                    self._avd_type = avd_type
-                    break
+            # OpenWrt uses cf target. So the infer logic is not suitable for it.
+            if self._avd_type != constants.TYPE_OPENWRT:
+                for avd_type, avd_type_abbr in constants.AVD_TYPES_MAPPING.items():
+                    if re.match(r"(.*_)?%s_" % avd_type_abbr,
+                                self._remote_image[constants.BUILD_TARGET]):
+                        self._avd_type = avd_type
+                        break
 
         self._remote_image[constants.BUILD_ID] = args.build_id
         if not self._remote_image[constants.BUILD_ID]:
@@ -908,6 +915,11 @@ class AVDSpec():
         return self._client_adb_port
 
     @property
+    def stable_host_image_name(self):
+        """Return the Cuttlefish host image name."""
+        return self._stable_host_image_name
+
+    @property
     def stable_cheeps_host_image_name(self):
         """Return the Cheeps host image name."""
         return self._stable_cheeps_host_image_name
@@ -987,6 +999,11 @@ class AVDSpec():
     def oxygen(self):
         """Return oxygen."""
         return self._oxygen
+
+    @property
+    def openwrt(self):
+        """Return openwrt."""
+        return self._openwrt
 
     @property
     def launch_args(self):
