@@ -59,6 +59,8 @@ _DECOMPRESS_KERNEL_ARG = "-decompress_kernel=true"
 _AGREEMENT_PROMPT_ARG = "-report_anonymous_usage_stats=y"
 _UNDEFOK_ARG = "-undefok=report_anonymous_usage_stats,config"
 _NUM_AVDS_ARG = "-num_instances=%(num_AVD)s"
+# Connect the OpenWrt device via console file.
+_ENABLE_CONSOLE_ARG = "-console=true"
 _DEFAULT_BRANCH = "aosp-master"
 _FETCHER_BUILD_TARGET = "aosp_cf_x86_64_phone-userdebug"
 _FETCHER_NAME = "fetch_cvd"
@@ -344,6 +346,8 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
                 launch_cvd_args.append(_WEBRTC_ID % {"instance": instance})
             if avd_spec.connect_vnc:
                 launch_cvd_args.extend(_VNC_ARGS)
+            if avd_spec.openwrt:
+                launch_cvd_args.append(_ENABLE_CONSOLE_ARG)
             if avd_spec.num_avds_per_instance > 1:
                 launch_cvd_args.append(
                     _NUM_AVDS_ARG % {"num_AVD": avd_spec.num_avds_per_instance})
@@ -436,6 +440,10 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
                 error_msg = (
                     "VNC is not supported in current build. Please try WebRTC such "
                     "as '$acloud create' or '$acloud create --autoconnect webrtc'")
+            if constants.ERROR_MSG_WEBRTC_NOT_SUPPORT in str(e):
+                error_msg = (
+                    "WEBRTC is not supported in current build. Please try VNC such "
+                    "as '$acloud create --autoconnect vnc'")
             self._all_failures[instance] = error_msg
             utils.PrintColorString(str(e), utils.TextColors.FAIL)
             if avd_spec and not avd_spec.no_pull_log:
@@ -629,9 +637,12 @@ class CvdComputeClient(android_compute_client.AndroidComputeClient):
             for cert_file in constants.WEBRTC_CERTS_FILES + ["mkcert"]:
                 upload_files.append(os.path.join(mkcert_install_dir,
                                                  cert_file))
-            self._ssh.ScpPushFiles(upload_files, constants.WEBRTC_CERTS_PATH)
-            self._ssh.Run(_TRUST_REMOTE_INSTANCE_COMMAND % {
-                "webrtc_certs_path": constants.WEBRTC_CERTS_PATH})
+            try:
+                self._ssh.ScpPushFiles(upload_files, constants.WEBRTC_CERTS_PATH)
+                self._ssh.Run(_TRUST_REMOTE_INSTANCE_COMMAND % {
+                    "webrtc_certs_path": constants.WEBRTC_CERTS_PATH})
+            except subprocess.CalledProcessError:
+                logger.debug("Update WebRTC frontend certificate failed.")
 
     @utils.TimeExecute(function_description="Upload extra files to instance")
     def UploadExtraFiles(self, extra_files):
