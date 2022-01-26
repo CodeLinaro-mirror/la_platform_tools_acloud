@@ -89,7 +89,7 @@ def EscapeAnsi(line):
     return _RE_ANSI_ESCAPE.sub('', line)
 
 
-# pylint: disable=too-many-public-methods
+# pylint: disable=too-many-public-methods,too-many-lines,too-many-statements
 class AVDSpec():
     """Class to store data on the type of AVD to create."""
 
@@ -108,6 +108,7 @@ class AVDSpec():
         self._unlock_screen = None
         self._report_internal_ip = None
         self._disable_external_ip = None
+        self._extra_files = None
         self._avd_type = None
         self._flavor = None
         self._image_source = None
@@ -127,6 +128,7 @@ class AVDSpec():
         self._remote_image = None
         self._system_build_info = None
         self._kernel_build_info = None
+        self._ota_build_info = None
         self._bootloader_build_info = None
         self._hw_property = None
         self._hw_customize = False
@@ -135,6 +137,8 @@ class AVDSpec():
         self._host_user = None
         self._host_ssh_private_key_path = None
         self._gpu = None
+        self._disk_type = None
+        self._mkcert = None
         # Create config instance for android_build_client to query build api.
         self._cfg = config.GetAcloudConfig(args)
         # Reporting args.
@@ -200,6 +204,17 @@ class AVDSpec():
         self._ProcessMiscArgs(args)
         self._ProcessImageArgs(args)
         self._ProcessHWPropertyArgs(args)
+        self._ProcessAutoconnect()
+
+    def _ProcessAutoconnect(self):
+        """Process autoconnect.
+
+        Only Cuttlefish AVD support 'webrtc' and need to default use 'webrtc'.
+        Other AVD types(goldfish, cheeps..etc.) still keep using ‘vnc’.
+        """
+        if self._autoconnect == constants.INS_KEY_WEBRTC:
+            if self.avd_type not in [constants.TYPE_CF, constants.TYPE_OPENWRT]:
+                self._autoconnect = constants.INS_KEY_VNC
 
     def _ProcessImageArgs(self, args):
         """ Process Image Args.
@@ -303,6 +318,7 @@ class AVDSpec():
         self._report_internal_ip = args.report_internal_ip
         self._disable_external_ip = args.disable_external_ip
         self._avd_type = args.avd_type
+        self._extra_files = create_common.ParseExtraFilesArgs(args.extra_files)
         self._flavor = args.flavor or constants.FLAVOR_PHONE
         if args.remote_host:
             self._instance_type = constants.INSTANCE_TYPE_HOST
@@ -325,7 +341,9 @@ class AVDSpec():
         self._emulator_build_id = args.emulator_build_id
         self._emulator_build_target = args.emulator_build_target
         self._gpu = args.gpu
+        self._disk_type = (args.disk_type or self._cfg.disk_type)
         self._gce_metadata = create_common.ParseKeyValuePairArgs(args.gce_metadata)
+        self._mkcert = args.mkcert
 
         self._stable_cheeps_host_image_name = args.stable_cheeps_host_image_name
         self._stable_cheeps_host_image_project = args.stable_cheeps_host_image_project
@@ -576,13 +594,17 @@ class AVDSpec():
         self._remote_image[constants.CHEEPS_BETTY_IMAGE] = (
             args.cheeps_betty_image or self._cfg.betty_image)
 
-        # Process system image and kernel image.
+        # Process system image, kernel image, bootloader, and otatools.
         self._system_build_info = {constants.BUILD_ID: args.system_build_id,
                                    constants.BUILD_BRANCH: args.system_branch,
                                    constants.BUILD_TARGET: args.system_build_target}
+        self._ota_build_info = {constants.BUILD_ID: args.ota_build_id,
+                                constants.BUILD_BRANCH: args.ota_branch,
+                                constants.BUILD_TARGET: args.ota_build_target}
         self._kernel_build_info = {constants.BUILD_ID: args.kernel_build_id,
                                    constants.BUILD_BRANCH: args.kernel_branch,
-                                   constants.BUILD_TARGET: args.kernel_build_target}
+                                   constants.BUILD_TARGET: args.kernel_build_target,
+                                   constants.BUILD_ARTIFACT: args.kernel_artifact}
         self._bootloader_build_info = {
             constants.BUILD_ID: args.bootloader_build_id,
             constants.BUILD_BRANCH: args.bootloader_branch,
@@ -861,6 +883,11 @@ class AVDSpec():
         return self._serial_log_file
 
     @property
+    def disk_type(self):
+        """Return disk type."""
+        return self._disk_type
+
+    @property
     def gpu(self):
         """Return gpu."""
         return self._gpu
@@ -910,6 +937,11 @@ class AVDSpec():
     def ins_timeout_secs(self):
         """Return ins_timeout_secs."""
         return self._ins_timeout_secs
+
+    @property
+    def ota_build_info(self):
+        """Return ota_build_info."""
+        return self._ota_build_info
 
     @property
     def system_build_info(self):
@@ -965,3 +997,13 @@ class AVDSpec():
     def cvd_host_package(self):
         """Return cvd_host_package."""
         return self._cvd_host_package
+
+    @property
+    def extra_files(self):
+        """Return extra_files."""
+        return self._extra_files
+
+    @property
+    def mkcert(self):
+        """Return mkcert."""
+        return self._mkcert

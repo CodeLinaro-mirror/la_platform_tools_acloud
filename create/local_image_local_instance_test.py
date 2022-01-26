@@ -101,7 +101,7 @@ EOF"""
         """Test _CreateAVD."""
         mock_utils.IsSupportedPlatform.return_value = True
         mock_get_image.return_value = local_image_local_instance.ArtifactPaths(
-            "/image/path", "/host/bin/path", None, None, None, None)
+            "/image/path", "/host/bin/path", "host/usr/path", None, None, None, None)
         mock_check_running_cvd.return_value = True
         mock_avd_spec = mock.Mock()
         mock_lock = mock.Mock()
@@ -179,7 +179,7 @@ EOF"""
                    return_value="local-instance-1")
         mock_home_dir.return_value = "/local-instance-1"
         artifact_paths = local_image_local_instance.ArtifactPaths(
-            "/image/path", "/host/bin/path", "/misc/info/path",
+            "/image/path", "/host/bin/path", "/host/usr/path", "/misc/info/path",
             "/ota/tools/dir", "/system/image/path", "/boot/image/path")
         mock_ota_tools_object = mock.Mock()
         mock_ota_tools.OtaTools.return_value = mock_ota_tools_object
@@ -233,27 +233,16 @@ EOF"""
         cvd_host_dir = "/unit/test"
         mock_isfile.return_value = None
 
-        with mock.patch.dict("acloud.internal.lib.ota_tools.os.environ",
-                             {"ANDROID_HOST_OUT": cvd_host_dir,
-                              "ANDROID_SOONG_HOST_OUT": cvd_host_dir}, clear=True):
-            with self.assertRaises(errors.GetCvdLocalHostPackageError):
-                self.local_image_local_instance._FindCvdHostBinaries(
-                    [cvd_host_dir])
+        with self.assertRaises(errors.GetCvdLocalHostPackageError):
+            self.local_image_local_instance._FindCvdHostBinaries(
+                [cvd_host_dir])
 
         mock_isfile.side_effect = (
             lambda path: path == "/unit/test/bin/launch_cvd")
 
-        with mock.patch.dict("acloud.internal.lib.ota_tools.os.environ",
-                             {"ANDROID_HOST_OUT": cvd_host_dir,
-                              "ANDROID_SOONG_HOST_OUT": cvd_host_dir}, clear=True):
-            path = self.local_image_local_instance._FindCvdHostBinaries([])
-            self.assertEqual(path, cvd_host_dir)
-
-        with mock.patch.dict("acloud.internal.lib.ota_tools.os.environ",
-                             dict(), clear=True):
-            path = self.local_image_local_instance._FindCvdHostBinaries(
-                [cvd_host_dir])
-            self.assertEqual(path, cvd_host_dir)
+        path = self.local_image_local_instance._FindCvdHostBinaries(
+            [cvd_host_dir])
+        self.assertEqual(path, cvd_host_dir)
 
     @staticmethod
     def _CreateEmptyFile(path):
@@ -268,6 +257,7 @@ EOF"""
             image_dir = "/unit/test"
             cvd_dir = os.path.join(temp_dir, "cvd-host_package")
             self._CreateEmptyFile(os.path.join(cvd_dir, "bin", "launch_cvd"))
+            self._CreateEmptyFile(os.path.join(cvd_dir, "usr/share/webrtc/certs", "server.crt"))
 
             mock_avd_spec = mock.Mock(
                 local_image_dir=image_dir,
@@ -279,7 +269,7 @@ EOF"""
                 mock_avd_spec)
 
         mock_ota_tools.FindOtaToolsDir.assert_not_called()
-        self.assertEqual(paths, (image_dir, cvd_dir, None, None, None, None))
+        self.assertEqual(paths, (image_dir, cvd_dir, cvd_dir, None, None, None, None))
 
     @mock.patch("acloud.create.local_image_local_instance.ota_tools")
     def testGetImageFromBuildEnvironment(self, mock_ota_tools):
@@ -294,6 +284,7 @@ EOF"""
             misc_info_path = os.path.join(image_dir, "misc_info.txt")
             self._CreateEmptyFile(os.path.join(image_dir, "vbmeta.img"))
             self._CreateEmptyFile(os.path.join(cvd_dir, "bin", "launch_cvd"))
+            self._CreateEmptyFile(os.path.join(cvd_dir, "usr/share/webrtc/certs", "server.crt"))
             self._CreateEmptyFile(system_image_path)
             self._CreateEmptyFile(boot_image_path)
             self._CreateEmptyFile(os.path.join(extra_image_dir,
@@ -308,14 +299,15 @@ EOF"""
 
             with mock.patch.dict("acloud.create.local_image_local_instance."
                                  "os.environ",
-                                 {"ANDROID_SOONG_HOST_OUT": cvd_dir},
+                                 {"ANDROID_SOONG_HOST_OUT": cvd_dir,
+                                  "ANDROID_HOST_OUT": "/cvd"},
                                  clear=True):
                 paths = self.local_image_local_instance.GetImageArtifactsPath(
                     mock_avd_spec)
 
-        mock_ota_tools.FindOtaToolsDir.assert_called_once()
+        mock_ota_tools.FindOtaToolsDir.assert_called_with([cvd_dir, "/cvd"])
         self.assertEqual(paths,
-                         (image_dir, cvd_dir, misc_info_path, cvd_dir,
+                         (image_dir, cvd_dir, cvd_dir, misc_info_path, cvd_dir,
                           system_image_path, boot_image_path))
 
     @mock.patch("acloud.create.local_image_local_instance.ota_tools")
@@ -333,6 +325,7 @@ EOF"""
             self._CreateEmptyFile(os.path.join(image_dir, "IMAGES",
                                                "vbmeta.img"))
             self._CreateEmptyFile(os.path.join(cvd_dir, "bin", "launch_cvd"))
+            self._CreateEmptyFile(os.path.join(cvd_dir, "usr/share/webrtc/certs", "server.crt"))
             self._CreateEmptyFile(system_image_path)
             self._CreateEmptyFile(misc_info_path)
             self._CreateEmptyFile(boot_image_path)
@@ -343,12 +336,16 @@ EOF"""
                 local_system_image=system_image_path,
                 local_tool_dirs=[ota_tools_dir, cvd_dir])
 
-            paths = self.local_image_local_instance.GetImageArtifactsPath(
-                mock_avd_spec)
+            with mock.patch.dict("acloud.create.local_image_local_instance."
+                                 "os.environ",
+                                 clear=True):
+                paths = self.local_image_local_instance.GetImageArtifactsPath(
+                    mock_avd_spec)
 
-        mock_ota_tools.FindOtaToolsDir.assert_called_once()
+        mock_ota_tools.FindOtaToolsDir.assert_called_with(
+            [ota_tools_dir, cvd_dir])
         self.assertEqual(paths,
-                         (os.path.join(image_dir, "IMAGES"), cvd_dir,
+                         (os.path.join(image_dir, "IMAGES"), cvd_dir, cvd_dir,
                           misc_info_path, ota_tools_dir, system_image_path,
                           boot_image_path))
 
@@ -425,12 +422,13 @@ EOF"""
         local_instance_id = 3
         launch_cvd_cmd = "launch_cvd"
         host_bins_path = "host_bins_path"
+        host_artifacts_path = "host_artifacts_path"
         cvd_home_dir = "fake_home"
         timeout = 100
         cvd_env = {}
         cvd_env[constants.ENV_CVD_HOME] = cvd_home_dir
         cvd_env[constants.ENV_CUTTLEFISH_INSTANCE] = str(local_instance_id)
-        cvd_env[constants.ENV_ANDROID_SOONG_HOST_OUT] = host_bins_path
+        cvd_env[constants.ENV_ANDROID_SOONG_HOST_OUT] = host_artifacts_path
         cvd_env[constants.ENV_ANDROID_HOST_OUT] = host_bins_path
         mock_proc = mock.Mock(returncode=0)
         mock_popen.return_value = mock_proc
@@ -439,6 +437,7 @@ EOF"""
         self.local_image_local_instance._LaunchCvd(launch_cvd_cmd,
                                                    local_instance_id,
                                                    host_bins_path,
+                                                   host_artifacts_path,
                                                    cvd_home_dir,
                                                    timeout)
 
@@ -454,21 +453,8 @@ EOF"""
     @mock.patch("acloud.create.local_image_local_instance.subprocess.Popen")
     def testLaunchCVDFailure(self, mock_popen):
         """test _LaunchCvd with subprocess errors."""
-        mock_proc = mock.Mock(returncode=255)
+        mock_proc = mock.Mock(returncode=9)
         mock_popen.return_value = mock_proc
-        mock_proc.communicate.side_effect = [
-            subprocess.TimeoutExpired(cmd="launch_cvd", timeout=100),
-            ("stdout", "stderr")
-        ]
-        with self.assertRaises(errors.LaunchCVDFail) as launch_cvd_failure:
-            self.local_image_local_instance._LaunchCvd("launch_cvd",
-                                                       3,
-                                                       "host_bins_path",
-                                                       "cvd_home_dir",
-                                                       100)
-        self.assertIn("100 secs", str(launch_cvd_failure.exception))
-
-        mock_proc.returncode=9
         mock_proc.communicate.side_effect = [
             ("stdout", "first line" + ("\n" * 10) + "last line\n")
         ]
@@ -476,11 +462,38 @@ EOF"""
             self.local_image_local_instance._LaunchCvd("launch_cvd",
                                                        3,
                                                        "host_bins_path",
+                                                       "host_artifacts_path",
                                                        "cvd_home_dir",
                                                        100)
         self.assertIn("returned 9", str(launch_cvd_failure.exception))
         self.assertNotIn("first line", str(launch_cvd_failure.exception))
         self.assertIn("last line", str(launch_cvd_failure.exception))
+
+    @mock.patch("acloud.create.local_image_local_instance.list_instance")
+    @mock.patch("acloud.create.local_image_local_instance.subprocess.Popen")
+    def testLaunchCVDTimeout(self, mock_popen, mock_list_instance):
+        """test _LaunchCvd with subprocess timeout."""
+        mock_proc = mock.Mock(returncode=255)
+        mock_popen.return_value = mock_proc
+        mock_proc.communicate.side_effect = [
+            subprocess.TimeoutExpired(cmd="launch_cvd", timeout=100),
+            ("stdout", "stderr")
+        ]
+        mock_instance = mock.Mock()
+        mock_list_instance.GetActiveCVD.return_value = mock_instance
+        mock_instance.Delete.side_effect = subprocess.CalledProcessError(
+            cmd="stop_cvd", returncode=255)
+        with self.assertRaises(errors.LaunchCVDFail) as launch_cvd_failure:
+            self.local_image_local_instance._LaunchCvd("launch_cvd",
+                                                       3,
+                                                       "host_bins_path",
+                                                       "host_artifacts_path",
+                                                       "cvd_home_dir",
+                                                       100)
+        self.assertIn("100 secs", str(launch_cvd_failure.exception))
+        mock_list_instance.GetActiveCVD.assert_called_with(3)
+        mock_instance.Delete.assert_called()
+        mock_proc.terminate.assert_called()
 
     def testGetWebrtcSigServerPort(self):
         """test GetWebrtcSigServerPort."""
