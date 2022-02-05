@@ -56,7 +56,9 @@ class InstanceTest(driver_test_lib.BaseDriverTest):
             "items":[{"key":constants.INS_KEY_AVD_TYPE,
                       "value":"fake_type"},
                      {"key":constants.INS_KEY_AVD_FLAVOR,
-                      "value":"fake_flavor"}]}
+                      "value":"fake_flavor"},
+                     {"key":constants.INS_KEY_WEBRTC_PORT,
+                      "value":"fake_webrtc_port"}]}
     }
 
     @staticmethod
@@ -283,7 +285,9 @@ class InstanceTest(driver_test_lib.BaseDriverTest):
                           "   display: None\n "
                           "   vnc: 127.0.0.1:654321\n "
                           "   zone: fake_zone\n "
-                          "   webrtc port: 8443\n "
+                          "   autoconnect: webrtc\n "
+                          "   webrtc port: fake_webrtc_port\n "
+                          "   webrtc forward port: 8443\n "
                           "   adb serial: 127.0.0.1:123456\n "
                           "   product: None\n "
                           "   model: None\n "
@@ -307,7 +311,9 @@ class InstanceTest(driver_test_lib.BaseDriverTest):
                           "   display: None\n "
                           "   vnc: 127.0.0.1:None\n "
                           "   zone: fake_zone\n "
-                          "   webrtc port: 8443\n "
+                          "   autoconnect: webrtc\n "
+                          "   webrtc port: fake_webrtc_port\n "
+                          "   webrtc forward port: 8443\n "
                           "   adb serial: disconnected")
         self.assertEqual(remote_instance.Summary(), result_summary)
 
@@ -334,6 +340,27 @@ class InstanceTest(driver_test_lib.BaseDriverTest):
         expected_result = "ins_runtime_dir/instances/cvd-1/cuttlefish_config.json"
         self.assertEqual(
             instance.GetLocalInstanceConfig(instance_id), expected_result)
+
+    def testGetAutoConnect(self):
+        """Test GetAutoConnect."""
+        name = "ins_name"
+        fullname = "fake_fullname"
+        display = "1080x1920 (480)"
+        ip = "fake_ip"
+        ins_webrtc = instance.Instance(
+            name, fullname, display, ip, webrtc_port=8443)
+        self.assertEqual(ins_webrtc._GetAutoConnect(), constants.INS_KEY_WEBRTC)
+
+        ins_webrtc = instance.Instance(
+            name, fullname, display, ip, vnc_port=6520)
+        self.assertEqual(ins_webrtc._GetAutoConnect(), constants.INS_KEY_VNC)
+
+        ins_webrtc = instance.Instance(
+            name, fullname, display, ip, adb_port=6666)
+        self.assertEqual(ins_webrtc._GetAutoConnect(), constants.INS_KEY_ADB)
+
+        ins_webrtc = instance.Instance(name, fullname, display, ip)
+        self.assertEqual(ins_webrtc._GetAutoConnect(), None)
 
 
 if __name__ == "__main__":
