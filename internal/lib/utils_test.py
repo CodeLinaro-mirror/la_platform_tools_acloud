@@ -442,6 +442,10 @@ class UtilsTest(driver_test_lib.BaseDriverTest):
         fake_port_mapping = [utils.PortMapping(15550, 15550),
                              utils.PortMapping(15551, 15551),
                              utils.PortMapping(15552, 15552),
+                             utils.PortMapping(15553, 15553),
+                             utils.PortMapping(15554, 15554),
+                             utils.PortMapping(15555, 15555),
+                             utils.PortMapping(15556, 15556),
                              utils.PortMapping(12345, 8443)]
 
         utils.EstablishWebRTCSshTunnel(
@@ -561,6 +565,14 @@ class UtilsTest(driver_test_lib.BaseDriverTest):
             utils.SetDirectoryTreeExecutable(temp_dir)
             self.assertEqual(os.stat(file_path).st_mode & 0o777, 0o755)
 
+    def testSetCvdPort(self):
+        """test base_instance_num."""
+        utils.SetCvdPorts(2)
+        self.assertEqual(utils.GetCvdPorts().adb_port, 6521)
+        self.assertEqual(utils.GetCvdPorts().vnc_port, 6445)
+        utils.SetCvdPorts(None)
+
+
     @mock.patch.object(utils, "PrintColorString")
     def testPrintDeviceSummary(self, mock_print):
         """test PrintDeviceSummary."""
@@ -580,7 +592,7 @@ class UtilsTest(driver_test_lib.BaseDriverTest):
                          "screen_command": "fake_screen_cmd"},],}
         mock_print.reset_mock()
         utils.PrintDeviceSummary(fake_report)
-        self.assertEqual(mock_print.call_count, 11)
+        self.assertEqual(mock_print.call_count, 13)
 
         # Test for fail case
         fake_report.data = {
