@@ -188,6 +188,11 @@ class RemoteHostDeviceFactory(base_device_factory.BaseDeviceFactory):
         creds_cache_file = os.path.join(_HOME_FOLDER, cfg.creds_cache_file)
         fetch_cvd_cert_arg = self._compute_client.build_api.GetFetchCertArg(
             creds_cache_file)
+
+        # Override certification when service account json private key is provided
+        if cfg.service_account_json_private_key_path:
+            fetch_cvd_cert_arg = f"-credential_source=./{constants.FETCH_CVD_CREDENTIAL_SOURCE}"
+
         fetch_cvd_args = [f'./{constants.FETCH_CVD}', "-directory=./", fetch_cvd_cert_arg]
         fetch_cvd_args.extend(fetch_cvd_build_args)
         ssh_cmd = self._ssh.GetBaseCmd(constants.SSH_BIN)
@@ -197,7 +202,8 @@ class RemoteHostDeviceFactory(base_device_factory.BaseDeviceFactory):
 
     @utils.TimeExecute(function_description="Download and upload fetch_cvd")
     def _UploadFetchCvd(self, extract_path):
-        """Download fetch cvd and upload fetch_cvd to remote host.
+        """Download fetch_cvd, duplicate service account json private key when available and upload
+           to remote host.
 
         Args:
             extract_path: String, a path include extracted files.
@@ -206,6 +212,12 @@ class RemoteHostDeviceFactory(base_device_factory.BaseDeviceFactory):
         fetch_cvd = os.path.join(extract_path, constants.FETCH_CVD)
         self._compute_client.build_api.DownloadFetchcvd(fetch_cvd,
                                                         cfg.fetch_cvd_version)
+        # Duplicate fetch_cvd API key when available
+        if cfg.service_account_json_private_key_path:
+            shutil.copyfile(
+                cfg.service_account_json_private_key_path,
+                os.path.join(extract_path, constants.FETCH_CVD_CREDENTIAL_SOURCE))
+
         self._UploadRemoteImageArtifacts(extract_path)
 
     @utils.TimeExecute(function_description="Downloading Android Build artifact")
@@ -313,6 +325,24 @@ class RemoteHostDeviceFactory(base_device_factory.BaseDeviceFactory):
         if self._avd_spec.image_source == constants.IMAGE_SRC_LOCAL:
             return None
         return cvd_utils.GetRemoteBuildInfoDict(self._avd_spec)
+
+    def GetAdbPorts(self):
+        """Get ADB ports of the created devices.
+
+        Returns:
+            The port numbers as a list of integers.
+        """
+        return cvd_utils.GetAdbPorts(self._avd_spec.base_instance_num,
+                                     self._avd_spec.num_avds_per_instance)
+
+    def GetVncPorts(self):
+        """Get VNC ports of the created devices.
+
+        Returns:
+            The port numbers as a list of integers.
+        """
+        return cvd_utils.GetVncPorts(self._avd_spec.base_instance_num,
+                                     self._avd_spec.num_avds_per_instance)
 
     def GetFailures(self):
         """Get failures from all devices.
