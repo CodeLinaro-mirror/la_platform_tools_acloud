@@ -239,7 +239,7 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
         fake_avd_spec.base_instance_num = None
         fake_avd_spec.num_avds_per_instance = None
 
-        mock_cvd_utils.ConvertRemoteLogs.return_value = [{"path": "/logcat"}]
+        mock_cvd_utils.FindRemoteLogs.return_value = [{"path": "/logcat"}]
         mock_cvd_utils.UploadExtraImages.return_value = [
             "-boot_image", "/boot/img"]
 
@@ -254,6 +254,7 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
         factory.CreateInstance()
         mock_create_gce_instance.assert_called_once()
         mock_cvd_utils.UploadArtifacts.assert_called_once()
+        mock_cvd_utils.FindRemoteLogs.assert_called_with(mock.ANY, None, None)
         compute_client.LaunchCvd.assert_called_once()
         self.assertEqual(
             ["-boot_image", "/boot/img"],
@@ -266,7 +267,7 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
         factory.GetVncPorts()
         mock_cvd_utils.GetVncPorts.assert_called_with(None, None)
         self.assertEqual({"instance": "failure"}, factory.GetFailures())
-        self.assertEqual(3, len(factory.GetLogs().get("instance")))
+        self.assertEqual(2, len(factory.GetLogs().get("instance")))
 
     @mock.patch.object(remote_instance_cf_device_factory.RemoteInstanceDeviceFactory,
                        "_CreateGceInstance")
@@ -288,7 +289,7 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
         fake_avd_spec.base_instance_num = 2
         fake_avd_spec.num_avds_per_instance = 3
 
-        mock_cvd_utils.ConvertRemoteLogs.return_value = [{"path": "/logcat"}]
+        mock_cvd_utils.FindRemoteLogs.return_value = [{"path": "/logcat"}]
         mock_cvd_utils.UploadExtraImages.return_value = []
 
         factory = remote_instance_cf_device_factory.RemoteInstanceDeviceFactory(
@@ -298,7 +299,8 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
         factory.CreateInstance()
 
         compute_client.FetchBuild.assert_called_once()
-        mock_pull.GetAllLogFilePaths.assert_called_once()
+        mock_cvd_utils.FindRemoteLogs.assert_called_with(mock.ANY, 2, 3)
+        mock_pull.GetAllLogFilePaths.assert_not_called()
         mock_pull.PullLogs.assert_not_called()
 
         factory.GetAdbPorts()
@@ -306,7 +308,7 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
         factory.GetVncPorts()
         mock_cvd_utils.GetVncPorts.assert_called_with(2, 3)
         self.assertFalse(factory.GetFailures())
-        self.assertEqual(4, len(factory.GetLogs().get("instance")))
+        self.assertEqual(3, len(factory.GetLogs().get("instance")))
 
     def testGetOpenWrtInfoDict(self):
         """Test GetOpenWrtInfoDict."""
