@@ -206,6 +206,32 @@ def AddCommonCreateArgs(parser):
         help="Goldfish remote host only. The name of the boot image to be "
         "retrieved from Android build, e.g., boot-5.10.img.")
     parser.add_argument(
+        "--boot-build-id",
+        type=str,
+        dest="boot_build_id",
+        required=False,
+        help="Boot image build ID, e.g., 8747889, 8748012.")
+    parser.add_argument(
+        "--boot-branch",
+        type=str,
+        dest="boot_branch",
+        required=False,
+        help="Boot image branch, e.g., aosp-gki13-boot-release, aosp-master.")
+    parser.add_argument(
+        "--boot-build-target",
+        type=str,
+        dest="boot_build_target",
+        required=False,
+        help="Boot image build target, "
+        "e.g., gki_x86_64-userdebug, aosp_cf_x86_64_phone-userdebug.")
+    parser.add_argument(
+        "--boot-artifact",
+        type=str,
+        dest="boot_artifact",
+        required=False,
+        help="The name of the boot image to be retrieved from Android build, "
+        "e.g., boot-5.10.img, boot.img.")
+    parser.add_argument(
         "--ota-branch",
         type=str,
         dest="ota_branch",
@@ -251,6 +277,13 @@ def AddCommonCreateArgs(parser):
         type=str,
         dest="launch_args",
         help="'cuttlefish only' Add extra args to launch_cvd command.",
+        required=False)
+    parser.add_argument(
+        "--pet-name",
+        "--webrtc_device_id",
+        type=str,
+        dest="webrtc_device_id",
+        help="'cuttlefish only' Give the pet name of the instance.",
         required=False)
     parser.add_argument(
         "--gce-metadata",
@@ -625,7 +658,7 @@ def GetCreateArgParser(subparser):
         dest="emulator_build_target",
         required=False,
         help="'goldfish remote host only' Emulator build target used to run "
-        "the images. e.g. sdk_tools_linux.")
+        "the images. e.g. emulator-linux_x64_nolocationui.")
 
     # Arguments for cheeps type.
     create_parser.add_argument(
@@ -810,13 +843,12 @@ def _VerifyGoldfishArgs(args):
             "Either none or all of --system-branch, --system-build-target, "
             "and --system-build-id must be specified for goldfish.")
 
-    remote_host_only_flags = ([args.emulator_build_target] +
-                              remote_kernel_flags + remote_system_flags)
+    remote_host_only_flags = remote_kernel_flags + remote_system_flags
     if args.avd_type == constants.TYPE_GF and args.remote_host is None and any(
             remote_host_only_flags):
         raise errors.UnsupportedCreateArgs(
-            "--kernel-*, --system-*, and --emulator-build-target for goldfish "
-            "are only supported for remote host.")
+            "--kernel-* and --system-* for goldfish are only supported for "
+            "remote host.")
 
 
 def VerifyArgs(args):
