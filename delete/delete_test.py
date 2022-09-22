@@ -20,7 +20,6 @@ from unittest import mock
 
 from acloud import errors
 from acloud.delete import delete
-from acloud.internal.lib import cvd_compute_client_multi_stage
 from acloud.internal.lib import driver_test_lib
 from acloud.internal.lib import oxygen_client
 from acloud.internal.lib import utils
@@ -227,8 +226,8 @@ class DeleteTest(driver_test_lib.BaseDriverTest):
             ip=mock_ssh_ip,
             user="vsoc-01",
             ssh_private_key_path="cfg_key_path")
-        mock_cvd_utils.CleanUpRemoteCvd.assert_called_with(mock_ssh_obj,
-                                                           raise_error=True)
+        mock_cvd_utils.CleanUpRemoteCvd.assert_called_with(
+            mock_ssh_obj, mock_cvd_utils.GCE_BASE_DIR, raise_error=True)
         self.assertEqual(delete_report.status, "SUCCESS")
         self.assertEqual(delete_report.data, {
             "deleted": [
@@ -253,8 +252,8 @@ class DeleteTest(driver_test_lib.BaseDriverTest):
             ip=mock_ssh_ip,
             user="user",
             ssh_private_key_path="key_path")
-        mock_cvd_utils.CleanUpRemoteCvd.assert_called_with(mock_ssh_obj,
-                                                           raise_error=True)
+        mock_cvd_utils.CleanUpRemoteCvd.assert_called_with(
+            mock_ssh_obj, mock_cvd_utils.GCE_BASE_DIR, raise_error=True)
         self.assertEqual(delete_report.status, "FAIL")
         self.assertEqual(len(delete_report.errors), 1)
 
@@ -389,8 +388,6 @@ class DeleteTest(driver_test_lib.BaseDriverTest):
 
         self.Patch(delete, "_ReleaseOxygenDevice")
         self.Patch(delete, "DeleteInstanceByNames")
-        self.Patch(cvd_compute_client_multi_stage.CvdComputeClient,
-                   "ParseRemoteHostAddress")
         self.Patch(delete, "CleanUpRemoteHost")
         fake_cfg = mock.MagicMock()
         fake_cfg.SupportRemoteInstance = mock.MagicMock()
