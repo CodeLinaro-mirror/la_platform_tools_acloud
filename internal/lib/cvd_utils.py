@@ -47,8 +47,9 @@ _INITRAMFS_IMAGE_NAME = "initramfs.img"
 # The relative path to the base directory containing cuttelfish images, tools,
 # and runtime files. On a GCE instance, the directory is the SSH user's HOME.
 GCE_BASE_DIR = "."
+_REMOTE_HOST_BASE_DIR_FORMAT = "acloud_cf_%(num)d"
 # Relative paths in a base directory.
-_REMOTE_IMAGE_DIR = "acloud_cf"
+_REMOTE_IMAGE_DIR = "acloud_image"
 _REMOTE_BOOT_IMAGE_PATH = remote_path.join(_REMOTE_IMAGE_DIR, "boot.img")
 _REMOTE_VENDOR_BOOT_IMAGE_PATH = remote_path.join(
     _REMOTE_IMAGE_DIR, _VENDOR_BOOT_IMAGE_NAME)
@@ -56,15 +57,16 @@ _REMOTE_KERNEL_IMAGE_PATH = remote_path.join(
     _REMOTE_IMAGE_DIR, _KERNEL_IMAGE_NAMES[0])
 _REMOTE_INITRAMFS_IMAGE_PATH = remote_path.join(
     _REMOTE_IMAGE_DIR, _INITRAMFS_IMAGE_NAME)
+_REMOTE_SUPER_IMAGE_DIR = remote_path.join(_REMOTE_IMAGE_DIR, "super_image_dir")
 
 _ANDROID_BOOT_IMAGE_MAGIC = b"ANDROID!"
 
 # Remote host instance name
 _REMOTE_HOST_INSTANCE_NAME_FORMAT = (
     constants.INSTANCE_TYPE_HOST +
-    "-%(ip_addr)s-%(build_id)s-%(build_target)s")
+    "-%(ip_addr)s-%(num)d-%(build_id)s-%(build_target)s")
 _REMOTE_HOST_INSTANCE_NAME_PATTERN = re.compile(
-    constants.INSTANCE_TYPE_HOST + r"-(?P<ip_addr>[\d.]+)-.+")
+    constants.INSTANCE_TYPE_HOST + r"-(?P<ip_addr>[\d.]+)-(?P<num>\d+)-.+")
 # launch_cvd arguments.
 _DATA_POLICY_CREATE_IF_MISSING = "create_if_missing"
 _DATA_POLICY_ALWAYS_CREATE = "always_create"
@@ -102,6 +104,12 @@ _REMOTE_RUNTIME_DIR_FORMAT = remote_path.join(
 _REMOTE_LEGACY_RUNTIME_DIR_FORMAT = "cuttlefish_runtime.%(num)d"
 HOST_KERNEL_LOG = report.LogFile(
     "/var/log/kern.log", constants.LOG_TYPE_KERNEL_LOG, "host_kernel.log")
+
+# Contents of the target_files archive.
+_DOWNLOAD_MIX_IMAGE_NAME = "{build_target}-target_files-{build_id}.zip"
+_TARGET_FILES_META_DIR_NAME = "META"
+_TARGET_FILES_IMAGES_DIR_NAME = "IMAGES"
+_MISC_INFO_FILE_NAME = "misc_info.txt"
 
 
 def GetAdbPorts(base_instance_num, num_avds_per_instance):
@@ -341,6 +349,34 @@ def UploadExtraImages(ssh_obj, remote_dir, avd_spec):
     return []
 
 
+@utils.TimeExecute(function_description="Uploading local super image")
+def UploadSuperImage(ssh_obj, remote_dir, super_image_path):
+    """Upload a super image to a remote host or a GCE instance.
+
+    Args:
+        ssh_obj: An Ssh object.
+        remote_dir: The remote base directory.
+        super_image_path: Path to the super image file.
+
+    Returns:
+        A list of strings, the launch_cvd arguments including the remote paths.
+    """
+    # Assume that the caller cleaned up the remote home directory.
+    super_image_stem = os.path.basename(super_image_path)
+    remote_super_image_dir = remote_path.join(
+        remote_dir, _REMOTE_SUPER_IMAGE_DIR)
+    remote_super_image_path = remote_path.join(
+        remote_super_image_dir, super_image_stem)
+    ssh_obj.Run(f"mkdir -p {remote_super_image_dir}")
+    cmd = (f"tar -cf - --lzop -S -C {os.path.dirname(super_image_path)} "
+           f"{super_image_stem} | "
+           f"{ssh_obj.GetBaseCmd(constants.SSH_BIN)} -- "
+           f"tar -xf - --lzop -S -C {remote_super_image_dir}")
+    ssh.ShellCmdWithRetry(cmd)
+    launch_cvd_args = ["-super_image", remote_super_image_path]
+    return launch_cvd_args
+
+
 def CleanUpRemoteCvd(ssh_obj, remote_dir, raise_error):
     """Call stop_cvd and delete the files on a remote host or a GCE instance.
 
@@ -370,11 +406,25 @@ def CleanUpRemoteCvd(ssh_obj, remote_dir, raise_error):
     ssh_obj.Run(f"'rm -rf {remote_path.join(remote_dir, '*')}'")
 
 
-def FormatRemoteHostInstanceName(ip_addr, build_id, build_target):
+def GetRemoteHostBaseDir(base_instance_num):
+    """Get remote base directory by instance number.
+
+    Args:
+        base_instance_num: Integer or None, the instance number of the device.
+
+    Returns:
+        The remote base directory.
+    """
+    return _REMOTE_HOST_BASE_DIR_FORMAT % {"num": base_instance_num or 1}
+
+
+def FormatRemoteHostInstanceName(ip_addr, base_instance_num, build_id,
+                                 build_target):
     """Convert an IP address and build info to an instance name.
 
     Args:
         ip_addr: String, the IP address of the remote host.
+        base_instance_num: Integer or None, the instance number of the device.
         build_id: String, the build id.
         build_target: String, the build target, e.g., aosp_cf_x86_64_phone.
 
@@ -383,6 +433,7 @@ def FormatRemoteHostInstanceName(ip_addr, build_id, build_target):
     """
     return _REMOTE_HOST_INSTANCE_NAME_FORMAT % {
         "ip_addr": ip_addr,
+        "num": base_instance_num or 1,
         "build_id": build_id,
         "build_target": build_target}
 
@@ -394,11 +445,14 @@ def ParseRemoteHostAddress(instance_name):
         instance_name: String, the instance name.
 
     Returns:
-        The IP address as a string.
+        The IP address and the base directory as strings.
         None if the name does not represent a remote host instance.
     """
     match = _REMOTE_HOST_INSTANCE_NAME_PATTERN.fullmatch(instance_name)
-    return match.group("ip_addr") if match else None
+    if match:
+        return (match.group("ip_addr"),
+                GetRemoteHostBaseDir(int(match.group("num"))))
+    return None
 
 
 # pylint:disable=too-many-branches
@@ -625,3 +679,68 @@ def GetRemoteBuildInfoDict(avd_spec):
          for key, val in avd_spec.bootloader_build_info.items() if val}
     )
     return build_info_dict
+
+
+def GetMixBuildTargetFilename(build_target, build_id):
+    """Get the mix build target filename.
+
+    Args:
+        build_id: String, Build id, e.g. "2263051", "P2804227"
+        build_target: String, the build target, e.g. cf_x86_phone-userdebug
+
+    Returns:
+        String, a file name, e.g. "cf_x86_phone-target_files-2263051.zip"
+    """
+    return _DOWNLOAD_MIX_IMAGE_NAME.format(
+        build_target=build_target.split('-')[0],
+        build_id=build_id)
+
+
+def FindMiscInfo(image_dir):
+    """Find misc info in build output dir or extracted target files.
+
+    Args:
+        image_dir: The directory to search for misc info.
+
+    Returns:
+        image_dir if the directory structure looks like an output directory
+        in build environment.
+        image_dir/META if it looks like extracted target files.
+
+    Raises:
+        errors.CheckPathError if this function cannot find misc info.
+    """
+    misc_info_path = os.path.join(image_dir, _MISC_INFO_FILE_NAME)
+    if os.path.isfile(misc_info_path):
+        return misc_info_path
+    misc_info_path = os.path.join(image_dir, _TARGET_FILES_META_DIR_NAME,
+                                  _MISC_INFO_FILE_NAME)
+    if os.path.isfile(misc_info_path):
+        return misc_info_path
+    raise errors.CheckPathError(
+        f"Cannot find {_MISC_INFO_FILE_NAME} in {image_dir}. The "
+        f"directory is expected to be an extracted target files zip or "
+        f"{constants.ENV_ANDROID_PRODUCT_OUT}.")
+
+
+def FindImageDir(image_dir):
+    """Find images in build output dir or extracted target files.
+
+    Args:
+        image_dir: The directory to search for images.
+
+    Returns:
+        image_dir if the directory structure looks like an output directory
+        in build environment.
+        image_dir/IMAGES if it looks like extracted target files.
+
+    Raises:
+        errors.GetLocalImageError if this function cannot find any image.
+    """
+    if glob.glob(os.path.join(image_dir, "*.img")):
+        return image_dir
+    subdir = os.path.join(image_dir, _TARGET_FILES_IMAGES_DIR_NAME)
+    if glob.glob(os.path.join(subdir, "*.img")):
+        return subdir
+    raise errors.GetLocalImageError(
+        "Cannot find images in %s." % image_dir)
