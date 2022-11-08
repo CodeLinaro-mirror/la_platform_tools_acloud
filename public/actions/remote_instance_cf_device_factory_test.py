@@ -143,7 +143,7 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
             fake_avd_spec,
             fake_image_name,
             fake_host_package_name)
-        self.assertEqual(factory._CreateGceInstance(), "ins-1234-userbuild-aosp-cf-x86-phone")
+        self.assertEqual(factory.CreateGceInstance(), "ins-1234-userbuild-aosp-cf-x86-phone")
 
         # Can't get target name from zip file name.
         fake_image_name = "/fake/aosp_cf_x86_phone.username.zip"
@@ -151,7 +151,7 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
             fake_avd_spec,
             fake_image_name,
             fake_host_package_name)
-        self.assertEqual(factory._CreateGceInstance(), "ins-1234-userbuild-fake-target")
+        self.assertEqual(factory.CreateGceInstance(), "ins-1234-userbuild-fake-target")
 
         # No image zip path, it uses local build images.
         fake_image_name = ""
@@ -159,7 +159,7 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
             fake_avd_spec,
             fake_image_name,
             fake_host_package_name)
-        self.assertEqual(factory._CreateGceInstance(), "ins-1234-userbuild-fake-target")
+        self.assertEqual(factory.CreateGceInstance(), "ins-1234-userbuild-fake-target")
 
     def testReuseInstanceNameMultiStage(self):
         """Test reuse instance name."""
@@ -185,7 +185,7 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
             fake_avd_spec,
             fake_image_name,
             fake_host_package_name)
-        self.assertEqual(factory._CreateGceInstance(), "fake-1234-userbuild-fake-target")
+        self.assertEqual(factory.CreateGceInstance(), "fake-1234-userbuild-fake-target")
 
     @mock.patch("acloud.public.actions.remote_instance_cf_device_factory."
                 "cvd_utils")
@@ -225,7 +225,7 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
         mock_cvd_utils.GetRemoteBuildInfoDict.assert_called()
 
     @mock.patch.object(remote_instance_cf_device_factory.RemoteInstanceDeviceFactory,
-                       "_CreateGceInstance")
+                       "CreateGceInstance")
     @mock.patch("acloud.public.actions.remote_instance_cf_device_factory.pull")
     @mock.patch("acloud.public.actions.remote_instance_cf_device_factory."
                 "cvd_utils")
@@ -263,9 +263,8 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
         mock_cvd_utils.FindRemoteLogs.assert_called_with(
             mock.ANY, mock_cvd_utils.GCE_BASE_DIR, None, None)
         compute_client.LaunchCvd.assert_called_once()
-        self.assertEqual(
-            ["-boot_image", "/boot/img"],
-            compute_client.LaunchCvd.call_args[1].get("extra_args"))
+        self.assertIn(["-boot_image", "/boot/img"],
+                      compute_client.LaunchCvd.call_args[0])
         mock_pull.GetAllLogFilePaths.assert_called_once_with(
             mock.ANY, constants.REMOTE_LOG_FOLDER)
         mock_pull.PullLogs.assert_called_once()
@@ -297,7 +296,7 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
             self.Patch(cvd_compute_client_multi_stage, "CvdComputeClient")
             self.Patch(
                 remote_instance_cf_device_factory.RemoteInstanceDeviceFactory,
-                "_CreateGceInstance", return_value="instance")
+                "CreateGceInstance", return_value="instance")
             self.Patch(
                 remote_instance_cf_device_factory.RemoteInstanceDeviceFactory,
                 "_FindLogFiles")
@@ -328,7 +327,7 @@ class RemoteInstanceDeviceFactoryTest(driver_test_lib.BaseDriverTest):
             cvd_utils.UploadSuperImage.assert_called_once()
 
     @mock.patch.object(remote_instance_cf_device_factory.RemoteInstanceDeviceFactory,
-                       "_CreateGceInstance")
+                       "CreateGceInstance")
     @mock.patch("acloud.public.actions.remote_instance_cf_device_factory.pull")
     @mock.patch("acloud.public.actions.remote_instance_cf_device_factory."
                 "cvd_utils")
