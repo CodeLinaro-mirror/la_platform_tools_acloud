@@ -338,6 +338,13 @@ def AddCommonCreateArgs(parser):
         default=1,
         help="'cuttlefish only' Create multiple cuttlefish AVDs in one local "
              "instance.")
+    parser.add_argument(
+        "--connect-hostname",
+        action="store_true",
+        dest="connect_hostname",
+        required=False,
+        default=False,
+        help="Ssh connects to the GCE instance with hostname.")
     # Hide following args for users, it is only used in infra.
     parser.add_argument(
         "--local-instance-dir",
@@ -438,6 +445,15 @@ def AddCommonCreateArgs(parser):
         required=False,
         default=None,
         help="'cuttlefish only' Fetch artifacts in remote host.")
+    parser.add_argument(
+        "--fetch-cvd-wrapper",
+        dest="fetch_cvd_wrapper",
+        type=str,
+        required=False,
+        help="'cuttlefish only' Fetch artifacts in remote host by a"
+        " provided static executable fetch cvd wrapper file. "
+        " (Still in experiment, this flag only works on lab hosts"
+        " with special setup.)")
 
 
 def GetCreateArgParser(subparser):
