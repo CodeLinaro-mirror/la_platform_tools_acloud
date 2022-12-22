@@ -13,20 +13,22 @@
 # limitations under the License.
 """Tests for remote_image_local_instance."""
 
-import unittest
+import builtins
 from collections import namedtuple
 import os
 import shutil
 import subprocess
+import unittest
 
 from unittest import mock
 
 from acloud import errors
 from acloud.create import create_common
 from acloud.create import remote_image_local_instance
-from acloud.create import local_image_local_instance
+from acloud.internal import constants
 from acloud.internal.lib import android_build_client
 from acloud.internal.lib import auth
+from acloud.internal.lib import cvd_utils
 from acloud.internal.lib import driver_test_lib
 from acloud.internal.lib import ota_tools
 from acloud.internal.lib import utils
@@ -58,6 +60,7 @@ class RemoteImageLocalInstanceTest(driver_test_lib.BaseDriverTest):
         mock_proc.return_value = "/unit/test"
         avd_spec = mock.MagicMock()
         avd_spec.local_system_image = None
+        avd_spec.local_vendor_image = None
         # raise errors.NoCuttlefishCommonInstalled
         self.Patch(setup_common, "PackageInstalled", return_value=False)
         self.assertRaises(errors.NoCuttlefishCommonInstalled,
@@ -83,10 +86,10 @@ class RemoteImageLocalInstanceTest(driver_test_lib.BaseDriverTest):
         self.Patch(create_common, "DownloadRemoteArtifact")
         self.Patch(os.path, "exists", side_effect=[True, False])
         self.Patch(create_common, "GetNonEmptyEnvVars")
-        self.Patch(local_image_local_instance.LocalImageLocalInstance,
-                   "FindMiscInfo", return_value="/mix_image_1234/MISC")
-        self.Patch(local_image_local_instance.LocalImageLocalInstance,
-                   "FindImageDir", return_value="/mix_image_1234/IMAGES")
+        self.Patch(cvd_utils, "FindMiscInfo",
+                   return_value="/mix_image_1234/MISC")
+        self.Patch(cvd_utils, "FindImageDir",
+                   return_value="/mix_image_1234/IMAGES")
         self.Patch(ota_tools, "FindOtaToolsDir", return_value="/ota_tools_dir")
         self.Patch(create_common, "FindLocalImage", return_value="/system_image_path")
         paths = self.RemoteImageLocalInstance.GetImageArtifactsPath(avd_spec)
@@ -118,10 +121,15 @@ class RemoteImageLocalInstanceTest(driver_test_lib.BaseDriverTest):
         self.Patch(os.path, "exists", side_effect=[True, False])
         self.Patch(os, "makedirs")
         self.Patch(subprocess, "check_call")
-        remote_image_local_instance.DownloadAndProcessImageFiles(avd_spec)
+        mock_open = self.Patch(builtins, "open")
+        fetch_dir = remote_image_local_instance.DownloadAndProcessImageFiles(
+            avd_spec)
         self.assertEqual(mock_rmtree.call_count, 1)
         self.assertEqual(self.build_client.GetFetchBuildArgs.call_count, 1)
         self.assertEqual(self.build_client.GetFetchCertArg.call_count, 1)
+        cvd_config_filename = os.path.join(fetch_dir,
+                                           constants.FETCH_CVD_ARGS_FILE)
+        mock_open.assert_called_once_with(cvd_config_filename, "w")
 
     def testConfirmDownloadRemoteImageDir(self):
         """Test confirm download remote image dir"""

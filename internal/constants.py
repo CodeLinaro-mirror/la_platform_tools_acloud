@@ -252,10 +252,11 @@ ACLOUD_OXYGEN_RELEASE_ERROR = "ACLOUD_OXYGEN_RELEASE_ERROR"
 # Key words of error messages.
 ERROR_MSG_VNC_NOT_SUPPORT = "unknown command line flag 'start_vnc_server'"
 ERROR_MSG_WEBRTC_NOT_SUPPORT = "unknown command line flag 'start_webrtc'"
-ERROR_MSG_SSO_INVALID = "failed to load SSO"
+ERROR_MSG_SSO_INVALID = "stuck at SSO"
 
 # The name of download image tool.
 FETCH_CVD = "fetch_cvd"
+FETCH_CVD_ARGS_FILE = "fetch-cvd-args.txt"
 
 # The name of credential source key json file, a copy of
 # cfg.service_account_json_private_key_path for remote host case.
