@@ -552,6 +552,20 @@ class AvdSpecTest(driver_test_lib.BaseDriverTest):
         self.mock_config.connect_hostname = False
         self.assertTrue(self.AvdSpec.connect_hostname)
 
+        # Verify fetch_cvd_version
+        self.args.fetch_cvd_build_id = None
+        build_client = mock.MagicMock()
+        self.Patch(android_build_client, "AndroidBuildClient",
+                   return_value=build_client)
+        self.Patch(auth, "CreateCredentials", return_value=mock.MagicMock())
+        self.Patch(build_client, "GetFetcherVersion", return_value="12345")
+        self.AvdSpec._ProcessMiscArgs(self.args)
+        self.assertEqual(self.AvdSpec.fetch_cvd_version, "12345")
+
+        self.args.fetch_cvd_build_id = "23456"
+        self.AvdSpec._ProcessMiscArgs(self.args)
+        self.assertEqual(self.AvdSpec.fetch_cvd_version, "23456")
+
 
 if __name__ == "__main__":
     unittest.main()
