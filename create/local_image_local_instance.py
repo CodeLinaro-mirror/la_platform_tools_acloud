@@ -77,6 +77,7 @@ logger = logging.getLogger(__name__)
 _SYSTEM_IMAGE_NAME_PATTERN = r"system\.img"
 _SUPER_IMAGE_NAME = "super.img"
 _MIXED_SUPER_IMAGE_NAME = "mixed_super.img"
+_CMD_CVD_SELECTOR_ARGS_ = " --acquire_file_lock=false"
 _CMD_CVD_START = " start"
 _CMD_LAUNCH_CVD_ARGS = (
     " -daemon -config=%s -system_image_dir %s -instance_dir %s "
@@ -94,6 +95,7 @@ _CMD_LAUNCH_CVD_KERNEL_IMAGE_ARG = " -kernel_path=%s"
 _CMD_LAUNCH_CVD_INITRAMFS_IMAGE_ARG = " -initramfs_path=%s"
 _CMD_LAUNCH_CVD_VBMETA_IMAGE_ARG = " -vbmeta_image=%s"
 _CMD_LAUNCH_CVD_NO_ADB_ARG = " -run_adb_connector=false"
+_CMD_LAUNCH_CVD_NO_FASTBOOT_ARG = " -proxy_fastboot=false"
 _CMD_LAUNCH_CVD_INSTANCE_NUMS_ARG = " -instance_nums=%s"
 # Connect the OpenWrt device via console file.
 _CMD_LAUNCH_CVD_CONSOLE_ARG = " -console=true"
@@ -299,6 +301,7 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
                          constants.ANDROID_INFO_FILE))
         cmd = self.PrepareLaunchCVDCmd(hw_property,
                                        avd_spec.connect_adb,
+                                       avd_spec.connect_fastboot,
                                        artifact_paths,
                                        runtime_dir,
                                        avd_spec.connect_webrtc,
@@ -432,12 +435,12 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
         """Find boot, vendor_boot, kernel, and initramfs images in a path.
 
         This method expects image_path to be:
+        - An output directory of a kernel build. It contains a kernel image and
+          initramfs.img.
         - A generic boot image or its parent directory. The image name is
           boot-*.img. The directory does not contain vendor_boot.img.
         - An output directory of a cuttlefish build. It contains boot.img and
           vendor_boot.img.
-        - An output directory of a kernel build. It contains a kernel image and
-          initramfs.img.
 
         Args:
             image_path: A path to an image file or an image directory.
@@ -450,15 +453,15 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
             errors.GetLocalImageError if image_path does not contain boot or
             kernel images.
         """
-        boot_image_path, vendor_boot_image_path = cvd_utils.FindBootImages(
-            image_path)
-        if boot_image_path:
-            return boot_image_path, vendor_boot_image_path, None, None
-
         kernel_image_path, initramfs_image_path = cvd_utils.FindKernelImages(
             image_path)
         if kernel_image_path and initramfs_image_path:
             return None, None, kernel_image_path, initramfs_image_path
+
+        boot_image_path, vendor_boot_image_path = cvd_utils.FindBootImages(
+            image_path)
+        if boot_image_path:
+            return boot_image_path, vendor_boot_image_path, None, None
 
         raise errors.GetLocalImageError(f"{image_path} is not a boot image or "
                                         f"a directory containing images.")
@@ -568,10 +571,10 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
 
     # pylint: disable=too-many-branches
     @staticmethod
-    def PrepareLaunchCVDCmd(hw_property, connect_adb, artifact_paths,
-                            runtime_dir, connect_webrtc, connect_vnc,
-                            super_image_path, launch_args, config,
-                            openwrt=False, use_launch_cvd=False,
+    def PrepareLaunchCVDCmd(hw_property, connect_adb, connect_fastboot,
+                            artifact_paths, runtime_dir, connect_webrtc,
+                            connect_vnc, super_image_path, launch_args,
+                            config, openwrt=False, use_launch_cvd=False,
                             instance_ids=None, webrtc_device_id=None,
                             vbmeta_image_path=None):
         """Prepare launch_cvd command.
@@ -583,6 +586,7 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
             hw_property: dict object of hw property.
             artifact_paths: ArtifactPaths object.
             connect_adb: Boolean flag that enables adb_connector.
+            connect_fastboot: Boolean flag that enables fastboot_proxy.
             runtime_dir: String of runtime directory path.
             connect_webrtc: Boolean of connect_webrtc.
             connect_vnc: Boolean of connect_vnc.
@@ -600,7 +604,7 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
         """
         bin_dir = os.path.join(artifact_paths.host_bins, "bin")
         cvd_path = os.path.join(bin_dir, constants.CMD_CVD)
-        start_cvd_cmd = cvd_path + _CMD_CVD_START
+        start_cvd_cmd = cvd_path + _CMD_CVD_SELECTOR_ARGS_ + _CMD_CVD_START
         if use_launch_cvd or not os.path.isfile(cvd_path):
             start_cvd_cmd = os.path.join(bin_dir, constants.CMD_LAUNCH_CVD)
         launch_cvd_w_args = start_cvd_cmd + _CMD_LAUNCH_CVD_ARGS % (
@@ -616,6 +620,9 @@ class LocalImageLocalInstance(base_avd_create.BaseAVDCreate):
 
         if not connect_adb:
             launch_cvd_w_args = launch_cvd_w_args + _CMD_LAUNCH_CVD_NO_ADB_ARG
+
+        if not connect_fastboot:
+            launch_cvd_w_args = launch_cvd_w_args + _CMD_LAUNCH_CVD_NO_FASTBOOT_ARG
 
         if connect_webrtc:
             launch_cvd_w_args = launch_cvd_w_args + _CMD_LAUNCH_CVD_WEBRTC_ARGS
