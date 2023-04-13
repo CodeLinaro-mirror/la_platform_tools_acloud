@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for restart."""
-import sys
-
 import unittest
 
 from unittest import mock
@@ -31,9 +29,9 @@ from acloud.restart import restart
 
 class RestartTest(driver_test_lib.BaseDriverTest):
     """Test restart."""
-    @mock.patch.object(sys, "exit")
+
     @mock.patch.object(restart, "RestartFromInstance")
-    def testRun(self, mock_restart, mock_exit):
+    def testRun(self, mock_restart):
         """test Run."""
         cfg = mock.MagicMock()
         args = mock.MagicMock()
@@ -51,23 +49,12 @@ class RestartTest(driver_test_lib.BaseDriverTest):
 
         # Test case for user select one instance to restart AVD.
         selected_instance = mock.MagicMock()
-        self.Patch(list_instances, "GetCFRemoteInstances",
-                   return_value=selected_instance)
         self.Patch(list_instances, "ChooseOneRemoteInstance",
                    return_value=selected_instance)
         args.instance_name = None
         restart.Run(args)
         mock_restart.assert_has_calls([
             mock.call(cfg, selected_instance, args.instance_id, args.powerwash)])
-
-        # Test case for not support local instances.
-        local_instances = mock.MagicMock()
-        self.Patch(list_instances, "GetCFRemoteInstances",
-                   return_value=None)
-        self.Patch(list_instances, "GetLocalInstances",
-                   return_value=local_instances)
-        restart.Run(args)
-        mock_exit.assert_called_once()
 
     # pylint: disable=no-member
     def testRestartFromInstance(self):

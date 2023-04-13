@@ -18,7 +18,6 @@ This command will restart the CF AVD from a remote instance.
 
 import logging
 import subprocess
-import sys
 
 from acloud import errors
 from acloud.internal import constants
@@ -33,8 +32,6 @@ from acloud.reconnect import reconnect
 
 
 logger = logging.getLogger(__name__)
-_NOT_SUPPORT_MSG = ("Currently the restart function doesn't support local "
-                    "instances. Please try to create one new instance.")
 
 
 def RestartFromInstance(cfg, instance, instance_id, powerwash_data):
@@ -99,10 +96,6 @@ def Run(args):
             cfg, [args.instance_name])
         return RestartFromInstance(
             cfg, instance[0], args.instance_id, args.powerwash)
-    if (not list_instances.GetCFRemoteInstances(cfg)
-            and list_instances.GetLocalInstances()):
-        utils.PrintColorString(_NOT_SUPPORT_MSG, utils.TextColors.FAIL)
-        sys.exit()
     return RestartFromInstance(cfg,
                                list_instances.ChooseOneRemoteInstance(cfg),
                                args.instance_id,
