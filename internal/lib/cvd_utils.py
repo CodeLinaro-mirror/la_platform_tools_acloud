@@ -75,6 +75,8 @@ _REMOTE_HOST_INSTANCE_NAME_FORMAT = (
     "-%(ip_addr)s-%(num)d-%(build_id)s-%(build_target)s")
 _REMOTE_HOST_INSTANCE_NAME_PATTERN = re.compile(
     constants.INSTANCE_TYPE_HOST + r"-(?P<ip_addr>[\d.]+)-(?P<num>\d+)-.+")
+# android-info.txt contents.
+_CONFIG_PATTERN = re.compile(r"^config=(?P<config>.+)$", re.MULTILINE)
 # launch_cvd arguments.
 _DATA_POLICY_CREATE_IF_MISSING = "create_if_missing"
 _DATA_POLICY_ALWAYS_CREATE = "always_create"
@@ -504,6 +506,25 @@ def ParseRemoteHostAddress(instance_name):
     return None
 
 
+def GetConfigFromRemoteAndroidInfo(ssh_obj, remote_dir):
+    """Get config from android-info.txt on a remote host or a GCE instance.
+
+    Args:
+        ssh_obj: An Ssh object.
+        remote_dir: The remote directory containing the images.
+
+    Returns:
+        A string, the config value. For example, "phone".
+    """
+    android_info = ssh_obj.GetCmdOutput(
+        "cat " + remote_path.join(remote_dir, constants.ANDROID_INFO_FILE))
+    logger.debug("Android info: %s", android_info)
+    config_match = _CONFIG_PATTERN.search(android_info)
+    if config_match:
+        return config_match.group("config")
+    return None
+
+
 # pylint:disable=too-many-branches
 def _GetLaunchCvdArgs(avd_spec, config):
     """Get launch_cvd arguments for remote instances.
@@ -769,6 +790,22 @@ def FindLocalLogs(runtime_dir, instance_num):
                 continue
             logs.append(report.LogFile(log_path, log_type))
     return logs
+
+
+def GetOpenWrtInfoDict(ssh_obj, remote_dir):
+    """Return the commands to connect to a remote OpenWrt console.
+
+    Args:
+        ssh_obj: An Ssh object.
+        remote_dir: The remote base directory.
+
+    Returns:
+        A dict containing the OpenWrt info.
+    """
+    console_path = remote_path.join(remote_dir, "cuttlefish_runtime",
+                                    "console")
+    return {"ssh_command": ssh_obj.GetBaseCmd(constants.SSH_BIN),
+            "screen_command": "screen " + console_path}
 
 
 def GetRemoteBuildInfoDict(avd_spec):
