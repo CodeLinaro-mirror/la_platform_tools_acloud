@@ -59,6 +59,7 @@ class RemoteHostDeviceFactoryTest(driver_test_lib.BaseDriverTest):
                          ota_build_info={},
                          host_package_build_info={},
                          remote_host="192.0.2.100",
+                         remote_image_dir=None,
                          host_user="user1",
                          host_ssh_private_key_path=None,
                          report_internal_ip=False,
@@ -127,8 +128,6 @@ class RemoteHostDeviceFactoryTest(driver_test_lib.BaseDriverTest):
         mock_pull.PullLogs.assert_called_once()
         factory.GetAdbPorts()
         mock_cvd_utils.GetAdbPorts.assert_called_with(2, 3)
-        factory.GetFastbootPorts()
-        mock_cvd_utils.GetFastbootPorts.assert_called_with(2, 3)
         factory.GetVncPorts()
         mock_cvd_utils.GetVncPorts.assert_called_with(2, 3)
         self.assertEqual({"inst": "failure"}, factory.GetFailures())
@@ -175,8 +174,6 @@ class RemoteHostDeviceFactoryTest(driver_test_lib.BaseDriverTest):
         mock_pull.PullLogs.assert_not_called()
         factory.GetAdbPorts()
         mock_cvd_utils.GetAdbPorts.assert_called_with(None, None)
-        factory.GetFastbootPorts()
-        mock_cvd_utils.GetFastbootPorts.assert_called_with(None, None)
         factory.GetVncPorts()
         mock_cvd_utils.GetVncPorts.assert_called_with(None, None)
         self.assertFalse(factory.GetFailures())
@@ -228,8 +225,6 @@ class RemoteHostDeviceFactoryTest(driver_test_lib.BaseDriverTest):
         mock_pull.PullLogs.assert_not_called()
         factory.GetAdbPorts()
         mock_cvd_utils.GetAdbPorts.assert_called_with(None, None)
-        factory.GetFastbootPorts()
-        mock_cvd_utils.GetFastbootPorts.assert_called_with(None, None)
         factory.GetVncPorts()
         mock_cvd_utils.GetVncPorts.assert_called_with(None, None)
         self.assertFalse(factory.GetFailures())

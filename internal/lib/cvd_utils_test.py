@@ -47,12 +47,6 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
         self.assertEqual([6520], cvd_utils.GetAdbPorts(1, 1))
         self.assertEqual([6521, 6522], cvd_utils.GetAdbPorts(2, 2))
 
-    def testGetFastbootPorts(self):
-        """Test GetFastbootPorts."""
-        self.assertEqual([7520], cvd_utils.GetFastbootPorts(None, None))
-        self.assertEqual([7520], cvd_utils.GetFastbootPorts(1, 1))
-        self.assertEqual([7521, 7522], cvd_utils.GetFastbootPorts(2, 2))
-
     def testGetVncPorts(self):
         """Test GetVncPorts."""
         self.assertEqual([6444], cvd_utils.GetVncPorts(None, None))
@@ -340,6 +334,7 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             cfg=mock_cfg,
             hw_customize=False,
             hw_property=hw_property,
+            remote_image_dir=None,
             connect_webrtc=False,
             connect_vnc=False,
             openwrt=False,
@@ -369,6 +364,7 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             cfg=mock_cfg,
             hw_customize=True,
             hw_property=hw_property,
+            remote_image_dir="img_dir",
             connect_webrtc=True,
             webrtc_device_id="pet-name",
             connect_vnc=True,
@@ -377,7 +373,10 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             base_instance_num=3,
             launch_args="--setupwizard_mode=REQUIRED")
         expected_cmd = (
-            "HOME=$HOME/dir dir/bin/launch_cvd -daemon --extra args "
+            "ANDROID_HOST_OUT=$(readlink -n -m img_dir) "
+            "ANDROID_PRODUCT_OUT=$ANDROID_HOST_OUT "
+            "HOME=$HOME/dir "
+            "img_dir/bin/launch_cvd -daemon --extra args "
             "-data_policy=create_if_missing -blank_data_image_mb=20480 "
             "-config=phone -x_res=1080 -y_res=1920 -dpi=240 "
             "-data_policy=always_create -blank_data_image_mb=10240 "
@@ -386,7 +385,7 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             "--webrtc_device_id=pet-name "
             "--start_vnc_server=true "
             "-console=true "
-            "-num_instances=2 --base-instance-num=3 "
+            "-num_instances=2 --base_instance_num=3 "
             "--setupwizard_mode=REQUIRED "
             "-undefok=report_anonymous_usage_stats,config "
             "-report_anonymous_usage_stats=y")

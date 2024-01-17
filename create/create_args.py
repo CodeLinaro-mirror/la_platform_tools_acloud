@@ -60,13 +60,12 @@ def AddCommonCreateArgs(parser):
         dest="autoconnect",
         required=False,
         choices=[constants.INS_KEY_VNC, constants.INS_KEY_ADB,
-                 constants.INS_KEY_FASTBOOT, constants.INS_KEY_WEBRTC],
-        help="Determines to establish a tunnel forwarding adb/fastboot/vnc and "
-             "launch VNC/webrtc. Establish a tunnel forwarding adb, fastboot and vnc "
+                 constants.INS_KEY_WEBRTC],
+        help="Determines to establish a tunnel forwarding adb/vnc and "
+             "launch VNC/webrtc. Establish a tunnel forwarding adb and vnc "
              "then launch vnc if --autoconnect vnc is provided. Establish a "
-             "tunnel forwarding adb and fastboot if --autoconnect adb is provided. Enstablish a "
-             "tunnel forwarding adb and fastboot if --autoconnect fastboot is provided. "
-             "Establish a tunnel forwarding adb, fastboot and auto-launch on the browser "
+             "tunnel forwarding adb if --autoconnect adb is provided. "
+             "Establish a tunnel forwarding adb and auto-launch on the browser "
              "if --autoconnect webrtc is provided. For local goldfish "
              "instance, create a window.")
     parser.add_argument(
@@ -385,6 +384,15 @@ def AddCommonCreateArgs(parser):
         required=False,
         help=argparse.SUPPRESS)
     parser.add_argument(
+        "--remote-image-dir",
+        dest="remote_image_dir",
+        required=False,
+        # 'cuttlefish remote host only' Upload images and cvd host package to
+        # the remote directory instead of the instance's own directory. If the
+        # directory has been initialized, acloud ignores the image arguments
+        # given by command line and reuses the images in the directory.
+        help=argparse.SUPPRESS)
+    parser.add_argument(
         "--oxygen",
         action="store_true",
         dest="oxygen",
@@ -528,13 +536,6 @@ def GetCreateArgParser(subparser):
         required=False,
         help="Specify port for adb forwarding.")
     create_parser.add_argument(
-        "--fastboot-port", "-f",
-        type=int,
-        default=None,
-        dest="fastboot_port",
-        required=False,
-        help="Specify port for fastboot forwarding.")
-    create_parser.add_argument(
         "--base-instance-num",
         type=int,
         default=None,
@@ -597,7 +598,7 @@ def GetCreateArgParser(subparser):
         dest="local_system_dlkm_image",
         nargs="?",
         required=False,
-        help="`cuttlefish only` Use the locally built system_dlkm image for "
+        help="`remote host only` Use the locally built system_dlkm image for "
         "the AVD. Look for the image in $ANDROID_PRODUCT_OUT if no args value "
         "is provided.")
     create_parser.add_argument(
@@ -875,11 +876,15 @@ def _VerifyHostArgs(args):
 
     if args.host_user != constants.GCE_USER and args.remote_host is None:
         raise errors.UnsupportedCreateArgs(
-            "--host-user only support for remote host.")
+            "--host-user is only supported for remote host.")
 
     if args.host_ssh_private_key_path and args.remote_host is None:
         raise errors.UnsupportedCreateArgs(
-            "--host-ssh-private-key-path only support for remote host.")
+            "--host-ssh-private-key-path is only supported for remote host.")
+
+    if args.remote_image_dir and args.remote_host is None:
+        raise errors.UnsupportedCreateArgs(
+            "--remote-image-dir is only supported for remote host.")
 
 
 def _VerifyGoldfishArgs(args):
@@ -967,29 +972,21 @@ def VerifyArgs(args):
                 "--system-* args are not supported for AVD type: %s"
                 % args.avd_type)
 
-    if args.num > 1:
-        if args.adb_port is not None:
-            raise errors.UnsupportedMultiAdbPort(
-                "--adb-port is not supported for multi-devices.")
+    if args.num > 1 and args.adb_port:
+        raise errors.UnsupportedMultiAdbPort(
+            "--adb-port is not supported for multi-devices.")
 
-        if args.fastboot_port is not None:
-            raise errors.UnsupportedMultiAdbPort(
-                "--fastboot-port is not supported for multi-devices.")
-
-        if args.local_instance is not None:
-            raise errors.UnsupportedCreateArgs(
-                "--num is not supported for local instance.")
+    if args.num > 1 and args.local_instance is not None:
+        raise errors.UnsupportedCreateArgs(
+            "--num is not supported for local instance.")
 
     if args.local_instance is None and args.gpu == _DEFAULT_GPU:
         raise errors.UnsupportedCreateArgs(
             "Please assign one gpu model for GCE instance. Reference: "
             "https://cloud.google.com/compute/docs/gpus")
 
-    if args.adb_port is not None:
+    if args.adb_port:
         utils.CheckPortFree(args.adb_port)
-
-    if args.fastboot_port is not None:
-        utils.CheckPortFree(args.fastboot_port)
 
     hw_properties = create_common.ParseKeyValuePairArgs(args.hw_property)
     for key in hw_properties:
