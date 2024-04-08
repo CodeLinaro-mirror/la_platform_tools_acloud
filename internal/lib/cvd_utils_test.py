@@ -159,7 +159,7 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
                                       local_vendor_image=None)
             args = cvd_utils.UploadExtraImages(mock_ssh, "dir", mock_avd_spec,
                                                None)
-            self.assertEqual(["-boot_image", "dir/acloud_image/boot.img"],
+            self.assertEqual([("-boot_image", "dir/acloud_image/boot.img")],
                              args)
             mock_ssh.Run.assert_called_once_with("mkdir -p dir/acloud_image")
             mock_ssh.ScpPushFile.assert_called_once_with(
@@ -170,8 +170,8 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             args = cvd_utils.UploadExtraImages(mock_ssh, "dir", mock_avd_spec,
                                                None)
             self.assertEqual(
-                ["-boot_image", "dir/acloud_image/boot.img",
-                 "-vendor_boot_image", "dir/acloud_image/vendor_boot.img"],
+                [("-boot_image", "dir/acloud_image/boot.img"),
+                 ("-vendor_boot_image", "dir/acloud_image/vendor_boot.img")],
                 args)
             mock_ssh.Run.assert_called_once()
             self.assertEqual(2, mock_ssh.ScpPushFile.call_count)
@@ -198,8 +198,8 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             args = cvd_utils.UploadExtraImages(mock_ssh, "dir", mock_avd_spec,
                                                None)
             self.assertEqual(
-                ["-kernel_path", "dir/acloud_image/kernel",
-                 "-initramfs_path", "dir/acloud_image/initramfs.img"],
+                [("-kernel_path", "dir/acloud_image/kernel"),
+                 ("-initramfs_path", "dir/acloud_image/initramfs.img")],
                 args)
             mock_ssh.Run.assert_called_once()
             self.assertEqual(2, mock_ssh.ScpPushFile.call_count)
@@ -232,8 +232,8 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
                                                target_files_dir)
 
         self.assertEqual(
-            ["-super_image", "dir/acloud_image/super.img",
-             "-vbmeta_image", "dir/acloud_image/vbmeta.img"],
+            [("-super_image", "dir/acloud_image/super.img"),
+             ("-vbmeta_image", "dir/acloud_image/vbmeta.img")],
             args)
         mock_find_ota_tools.assert_called_once_with([])
         mock_ssh.Run.assert_called_once_with("mkdir -p dir/acloud_image")
@@ -261,18 +261,36 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
     def testCleanUpRemoteCvd(self):
         """Test CleanUpRemoteCvd."""
         mock_ssh = mock.Mock()
+        mock_ssh.Run.side_effect = ["", "", ""]
         cvd_utils.CleanUpRemoteCvd(mock_ssh, "dir", raise_error=True)
-        mock_ssh.Run.assert_any_call("'HOME=$HOME/dir dir/bin/stop_cvd'")
-        mock_ssh.Run.assert_any_call("'rm -rf dir/*'")
+        mock_ssh.Run.assert_has_calls([
+            mock.call("'readlink -n -e dir/image_dir_link || true'"),
+            mock.call("'HOME=$HOME/dir dir/bin/stop_cvd'"),
+            mock.call("'rm -rf dir/*'")])
+
+        mock_ssh.reset_mock()
+        mock_ssh.Run.side_effect = ["img_dir", "", "", ""]
+        cvd_utils.CleanUpRemoteCvd(mock_ssh, "dir", raise_error=True)
+        mock_ssh.Run.assert_has_calls([
+            mock.call("'readlink -n -e dir/image_dir_link || true'"),
+            mock.call("'mkdir -p img_dir && flock img_dir.lock -c '\"'\"'"
+                      "rm -f dir/image_dir_link && "
+                      "expr $(test -s img_dir.lock && "
+                      "cat img_dir.lock || echo 1) - 1 > img_dir.lock || "
+                      "rm -rf img_dir img_dir.lock'\"'\"''"),
+            mock.call("'HOME=$HOME/dir dir/bin/stop_cvd'"),
+            mock.call("'rm -rf dir/*'")])
 
         mock_ssh.reset_mock()
         mock_ssh.Run.side_effect = [
+            "",
             subprocess.CalledProcessError(cmd="should raise", returncode=1)]
         with self.assertRaises(subprocess.CalledProcessError):
             cvd_utils.CleanUpRemoteCvd(mock_ssh, "dir", raise_error=True)
 
         mock_ssh.reset_mock()
         mock_ssh.Run.side_effect = [
+            "",
             subprocess.CalledProcessError(cmd="should ignore", returncode=1),
             None]
         cvd_utils.CleanUpRemoteCvd(mock_ssh, "dir", raise_error=False)
@@ -309,6 +327,158 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             "host-goldfish-192.0.2.1-5554-123456-sdk_x86_64-sdk")
         self.assertIsNone(result)
 
+    # pylint: disable=protected-access
+    def testRemoteImageDirLink(self):
+        """Test PrepareRemoteImageDirLink and _DeleteRemoteImageDirLink."""
+        self.assertEqual(os.path, cvd_utils.remote_path)
+        with tempfile.TemporaryDirectory(prefix="cvd_utils") as temp_dir:
+            env = os.environ.copy()
+            env["HOME"] = temp_dir
+            # Execute the commands locally.
+            mock_ssh = mock.Mock()
+            mock_ssh.Run.side_effect = lambda cmd: subprocess.check_output(
+                "sh -c " + cmd, shell=True, cwd=temp_dir, env=env
+            ).decode("utf-8")
+            # Relative paths under temp_dir.
+            base_dir_name_1 = "acloud_cf_1"
+            base_dir_name_2 = "acloud_cf_2"
+            image_dir_name = "test/img"
+            rel_ref_cnt_path = "test/img.lock"
+            # Absolute paths.
+            image_dir = os.path.join(temp_dir, image_dir_name)
+            ref_cnt_path = os.path.join(temp_dir, rel_ref_cnt_path)
+            link_path_1 = os.path.join(temp_dir, base_dir_name_1,
+                                       "image_dir_link")
+            link_path_2 = os.path.join(temp_dir, base_dir_name_2,
+                                       "image_dir_link")
+            # Delete non-existing directories.
+            cvd_utils._DeleteRemoteImageDirLink(mock_ssh, base_dir_name_1)
+            mock_ssh.Run.assert_called_with(
+                f"'readlink -n -e {base_dir_name_1}/image_dir_link || true'")
+            self.assertFalse(
+                os.path.exists(os.path.join(temp_dir, base_dir_name_1)))
+            self.assertFalse(os.path.exists(image_dir))
+            self.assertFalse(os.path.exists(ref_cnt_path))
+            # Prepare the first base dir.
+            cvd_utils.PrepareRemoteImageDirLink(mock_ssh, base_dir_name_1,
+                                                image_dir_name)
+            mock_ssh.Run.assert_called_with(
+                f"'mkdir -p {image_dir_name} && flock {rel_ref_cnt_path} -c "
+                f"'\"'\"'mkdir -p {base_dir_name_1} {image_dir_name} && "
+                f"ln -s -r {image_dir_name} "
+                f"{base_dir_name_1}/image_dir_link && "
+                f"expr $(test -s {rel_ref_cnt_path} && "
+                f"cat {rel_ref_cnt_path} || echo 0) + 1 > "
+                f"{rel_ref_cnt_path}'\"'\"''")
+            self.assertTrue(os.path.islink(link_path_1))
+            self.assertEqual("../test/img", os.readlink(link_path_1))
+            self.assertTrue(os.path.isfile(ref_cnt_path))
+            with open(ref_cnt_path, "r", encoding="utf-8") as ref_cnt_file:
+                self.assertEqual("1\n", ref_cnt_file.read())
+            # Prepare the second base dir.
+            cvd_utils.PrepareRemoteImageDirLink(mock_ssh, base_dir_name_2,
+                                                image_dir_name)
+            self.assertTrue(os.path.islink(link_path_2))
+            self.assertEqual("../test/img", os.readlink(link_path_2))
+            self.assertTrue(os.path.isfile(ref_cnt_path))
+            with open(ref_cnt_path, "r", encoding="utf-8") as ref_cnt_file:
+                self.assertEqual("2\n", ref_cnt_file.read())
+            # Delete the first base dir.
+            cvd_utils._DeleteRemoteImageDirLink(mock_ssh, base_dir_name_1)
+            self.assertFalse(os.path.lexists(link_path_1))
+            self.assertTrue(os.path.isfile(ref_cnt_path))
+            with open(ref_cnt_path, "r", encoding="utf-8") as ref_cnt_file:
+                self.assertEqual("1\n", ref_cnt_file.read())
+            # Delete the second base dir.
+            cvd_utils._DeleteRemoteImageDirLink(mock_ssh, base_dir_name_2)
+            self.assertFalse(os.path.lexists(link_path_2))
+            self.assertFalse(os.path.exists(image_dir))
+            self.assertFalse(os.path.exists(ref_cnt_path))
+
+    @mock.patch("acloud.internal.lib.cvd_utils.utils.PollAndWait")
+    @mock.patch("acloud.internal.lib.cvd_utils.utils.time.time",
+                return_value=90.0)
+    def testLoadRemoteImageArgs(self, _mock_time, mock_poll_and_wait):
+        """Test LoadRemoteImageArgs."""
+        deadline = 99.9
+        self.assertEqual(os.path, cvd_utils.remote_path)
+
+        with tempfile.TemporaryDirectory(prefix="cvd_utils") as temp_dir:
+            env = os.environ.copy()
+            env["HOME"] = temp_dir
+            # Execute the commands locally.
+            mock_ssh = mock.Mock()
+            mock_ssh.Run.side_effect = lambda cmd: subprocess.check_output(
+                "sh -c " + cmd, shell=True, cwd=temp_dir, env=env, text=True)
+            mock_poll_and_wait.side_effect = lambda func, **kwargs: func()
+
+            timestamp_path = os.path.join(temp_dir, "timestamp.txt")
+            args_path = os.path.join(temp_dir, "args.txt")
+
+            # Test with an uninitialized directory.
+            args = cvd_utils.LoadRemoteImageArgs(
+                mock_ssh, timestamp_path, args_path, deadline)
+
+            self.assertIsNone(args)
+            mock_ssh.Run.assert_called_once()
+            with open(timestamp_path, "r", encoding="utf-8") as timestamp_file:
+                timestamp = timestamp_file.read().strip()
+                self.assertRegex(timestamp, r"\d+",
+                                 f"Invalid timestamp: {timestamp}")
+            self.assertFalse(os.path.exists(args_path))
+
+            # Test with an initialized directory and the uploader times out.
+            mock_ssh.Run.reset_mock()
+
+            with self.assertRaises(errors.CreateError):
+                cvd_utils.LoadRemoteImageArgs(
+                    mock_ssh, timestamp_path, args_path, deadline)
+
+            mock_ssh.Run.assert_has_calls([
+                mock.call(f"'flock {timestamp_path} -c '\"'\"'"
+                          f"test -s {timestamp_path} && "
+                          f"cat {timestamp_path} || "
+                          f"expr $(date +%s) + 9 > {timestamp_path}'\"'\"''"),
+                mock.call(f"'flock {args_path} -c '\"'\"'"
+                          f"test -s {args_path} -o "
+                          f"{timestamp} -le $(date +%s) || "
+                          "echo wait...'\"'\"''"),
+                mock.call(f"'flock {args_path} -c '\"'\"'"
+                          f"cat {args_path}'\"'\"''")
+            ])
+            with open(timestamp_path, "r", encoding="utf-8") as timestamp_file:
+                self.assertEqual(timestamp_file.read().strip(), timestamp)
+            self.assertEqual(os.path.getsize(args_path), 0)
+
+            # Test with an initialized directory.
+            mock_ssh.Run.reset_mock()
+            self.CreateFile(args_path, b'[["arg", "1"]]')
+
+            args = cvd_utils.LoadRemoteImageArgs(
+                mock_ssh, timestamp_path, args_path, deadline)
+
+            self.assertEqual(args, [["arg", "1"]])
+            self.assertEqual(mock_ssh.Run.call_count, 3)
+
+    def testSaveRemoteImageArgs(self):
+        """Test SaveRemoteImageArgs."""
+        with tempfile.TemporaryDirectory(prefix="cvd_utils") as temp_dir:
+            env = os.environ.copy()
+            env["HOME"] = temp_dir
+            mock_ssh = mock.Mock()
+            mock_ssh.Run.side_effect = lambda cmd: subprocess.check_call(
+                "sh -c " + cmd, shell=True, cwd=temp_dir, env=env, text=True)
+            args_path = os.path.join(temp_dir, "args.txt")
+
+            cvd_utils.SaveRemoteImageArgs(mock_ssh, args_path, [("arg", "1")])
+
+            mock_ssh.Run.assert_called_with(
+                f"'flock {args_path} -c '\"'\"'"
+                f"""echo '"'"'"'"'"'"'"'"'[["arg", "1"]]'"'"'"'"'"'"'"'"' > """
+                f"{args_path}'\"'\"''")
+            with open(args_path, "r", encoding="utf-8") as args_file:
+                self.assertEqual(args_file.read().strip(), '[["arg", "1"]]')
+
     def testGetConfigFromRemoteAndroidInfo(self):
         """Test GetConfigFromRemoteAndroidInfo."""
         mock_ssh = mock.Mock()
@@ -334,7 +504,6 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             cfg=mock_cfg,
             hw_customize=False,
             hw_property=hw_property,
-            remote_image_dir=None,
             connect_webrtc=False,
             connect_vnc=False,
             openwrt=False,
@@ -364,7 +533,6 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             cfg=mock_cfg,
             hw_customize=True,
             hw_property=hw_property,
-            remote_image_dir="img_dir",
             connect_webrtc=True,
             webrtc_device_id="pet-name",
             connect_vnc=True,
@@ -373,10 +541,7 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             base_instance_num=3,
             launch_args="--setupwizard_mode=REQUIRED")
         expected_cmd = (
-            "ANDROID_HOST_OUT=$(readlink -n -m img_dir) "
-            "ANDROID_PRODUCT_OUT=$ANDROID_HOST_OUT "
-            "HOME=$HOME/dir "
-            "img_dir/bin/launch_cvd -daemon --extra args "
+            "HOME=$HOME/dir dir/bin/launch_cvd -daemon --extra args "
             "-data_policy=create_if_missing -blank_data_image_mb=20480 "
             "-config=phone -x_res=1080 -y_res=1920 -dpi=240 "
             "-data_policy=always_create -blank_data_image_mb=10240 "
@@ -568,7 +733,8 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             remote_image=remote_image,
             kernel_build_info={"build_target": "kernel"},
             system_build_info={},
-            bootloader_build_info={})
+            bootloader_build_info={},
+            android_efi_loader_build_info = {})
         self.assertEqual(remote_image,
                          cvd_utils.GetRemoteBuildInfoDict(mock_avd_spec))
 
@@ -584,6 +750,10 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             "branch": "aosp_u-boot-mainline",
             "build_id": "400000",
             "build_target": "u-boot_crosvm_x86_64"}
+        android_efi_loader_build_info = {
+            "build_id": "500000",
+            "artifact": "gbl_aarch64.efi"
+        }
         all_build_info = {
             "kernel_branch": "aosp_kernel-common-android12-5.10",
             "kernel_build_id": "200000",
@@ -593,14 +763,18 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             "system_build_target": "aosp_x86_64-userdebug",
             "bootloader_branch": "aosp_u-boot-mainline",
             "bootloader_build_id": "400000",
-            "bootloader_build_target": "u-boot_crosvm_x86_64"}
+            "bootloader_build_target": "u-boot_crosvm_x86_64",
+            "android_efi_loader_build_id": "500000",
+            "android_efi_loader_artifact": "gbl_aarch64.efi"
+        }
         all_build_info.update(remote_image)
         mock_avd_spec = mock.Mock(
             spec=[],
             remote_image=remote_image,
             kernel_build_info=kernel_build_info,
             system_build_info=system_build_info,
-            bootloader_build_info=bootloader_build_info)
+            bootloader_build_info=bootloader_build_info,
+            android_efi_loader_build_info=android_efi_loader_build_info)
         self.assertEqual(all_build_info,
                          cvd_utils.GetRemoteBuildInfoDict(mock_avd_spec))
 

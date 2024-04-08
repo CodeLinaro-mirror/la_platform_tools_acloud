@@ -19,6 +19,7 @@ Defines the create arg parser that holds create specific args.
 import argparse
 import logging
 import os
+import posixpath as remote_path
 
 from acloud import errors
 from acloud.create import create_common
@@ -171,6 +172,18 @@ def AddCommonCreateArgs(parser):
         type=str,
         dest="bootloader_build_target",
         help="'cuttlefish only' Bootloader build target.",
+        required=False)
+    parser.add_argument(
+        "--android-efi-loader-build-id",
+        type=str,
+        dest="android_efi_loader_build_id",
+        help="'cuttlefish only' Android EFI loader build id, e.g. P2804227",
+        required=False)
+    parser.add_argument(
+        "--android-efi-loader-artifact",
+        type=str,
+        dest="android_efi_loader_artifact",
+        help="'cuttlefish only' Android EFI loader artifact name, e.g. gbl_aarch64.efi",
         required=False)
     parser.add_argument(
         "--kernel-build-id",
@@ -882,9 +895,14 @@ def _VerifyHostArgs(args):
         raise errors.UnsupportedCreateArgs(
             "--host-ssh-private-key-path is only supported for remote host.")
 
-    if args.remote_image_dir and args.remote_host is None:
-        raise errors.UnsupportedCreateArgs(
-            "--remote-image-dir is only supported for remote host.")
+    if args.remote_image_dir:
+        if args.remote_host is None:
+            raise errors.UnsupportedCreateArgs(
+                "--remote-image-dir is only supported for remote host.")
+        if remote_path.basename(
+                remote_path.normpath(args.remote_image_dir)) in ("..", "."):
+            raise errors.UnsupportedCreateArgs(
+                "--remote-image-dir must not include the working directory.")
 
 
 def _VerifyGoldfishArgs(args):
