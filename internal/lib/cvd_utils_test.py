@@ -553,7 +553,7 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             base_instance_num=0,
             launch_args="")
         expected_cmd = (
-            "HOME=$HOME/dir dir/bin/launch_cvd -daemon "
+            "HOME=$HOME/dir cvd create "
             "-x_res=1080 -y_res=1920 -dpi=240 "
             "-undefok=report_anonymous_usage_stats,config "
             "-report_anonymous_usage_stats=y")
@@ -583,7 +583,7 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             base_instance_num=3,
             launch_args="--setupwizard_mode=REQUIRED")
         expected_cmd = (
-            "HOME=$HOME/dir dir/bin/launch_cvd -daemon --extra args "
+            "HOME=$HOME/dir cvd create --extra args "
             "-data_policy=create_if_missing -blank_data_image_mb=20480 "
             "-config=phone -x_res=1080 -y_res=1920 -dpi=240 "
             "-data_policy=always_create -blank_data_image_mb=10240 "
@@ -600,8 +600,8 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             "dir", mock_avd_spec, "phone", ("--extra", "args"))
         self.assertEqual(cmd, expected_cmd)
 
-    def testGetRemoteLaunchCvdCmdUseCvd(self):
-        """Test GetRemoteLaunchCvdCmd."""
+    def testGetRemoteLaunchCvdCmdTwoLArg(self):
+        """Test testGetRemoteLaunchCvdCmd."""
         # Minimum arguments
         mock_cfg = mock.Mock(extra_data_disk_size_gb=0)
         hw_property = {
@@ -610,9 +610,6 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             constants.HW_ALIAS_DPI: "240"}
         mock_avd_spec = mock.Mock(
             spec=[],
-            remote_image = {
-                "build_target": "cf_x86_64_phone-trunk_staging-userdebug",
-            },
             cfg=mock_cfg,
             hw_customize=False,
             hw_property=hw_property,
@@ -621,18 +618,19 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
             openwrt=False,
             num_avds_per_instance=1,
             base_instance_num=0,
-            launch_args="")
+            launch_args="--setupwizard_mode=REQUIRED -acloud_only_use_launch_cvd")
         expected_cmd = (
-            "HOME=$HOME/dir cvd create "
+            "HOME=$HOME/dir dir/bin/launch_cvd -daemon "
             "-x_res=1080 -y_res=1920 -dpi=240 "
+            "--setupwizard_mode=REQUIRED  "
             "-undefok=report_anonymous_usage_stats,config "
             "-report_anonymous_usage_stats=y")
         cmd = cvd_utils.GetRemoteLaunchCvdCmd("dir", mock_avd_spec,
                                               config=None, extra_args=())
         self.assertEqual(cmd, expected_cmd)
 
-    def testGetRemoteLaunchCvdCmdLArg(self):
-        """Test testGetRemoteLaunchCvdCmdLArg."""
+    def testGetRemoteLaunchCvdCmdOneLArg(self):
+        """Test testGetRemoteLaunchCvdCmd."""
         # Minimum arguments
         mock_cfg = mock.Mock(extra_data_disk_size_gb=0)
         hw_property = {
@@ -653,6 +651,7 @@ class CvdUtilsTest(driver_test_lib.BaseDriverTest):
         expected_cmd = (
             "HOME=$HOME/dir dir/bin/launch_cvd -daemon "
             "-x_res=1080 -y_res=1920 -dpi=240 "
+            " "
             "-undefok=report_anonymous_usage_stats,config "
             "-report_anonymous_usage_stats=y")
         cmd = cvd_utils.GetRemoteLaunchCvdCmd("dir", mock_avd_spec,

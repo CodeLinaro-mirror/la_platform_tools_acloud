@@ -149,10 +149,12 @@ _ARM_MACHINE_TYPE = "aarch64"
 # Used only by acloud to determine whether to use `cvd create` or `launch_cvd`.
 _LAUNCH_ARG_USE_LAUNCH_CVD="-acloud_only_use_launch_cvd"
 
-_USE_CVD_TARGETS = [
-    "cf_x86_64_phone-trunk_staging-userdebug",
-    "aosp_cf_x86_64_phone-trunk_staging-userdebug",
-]
+# Replaces `bin/powerwash_cvd` for Tradefed client when
+# instance is created via `cvd create`
+_CVD_POWERWASH_SCRIPT = """#!/bin/bash
+set -e -x
+cvd powerwash
+"""
 
 def GetAdbPorts(base_instance_num, num_avds_per_instance):
     """Get ADB ports of cuttlefish.
@@ -920,30 +922,22 @@ def GetRemoteLaunchCvdCmd(remote_dir, avd_spec, config, extra_args):
         logger.debug(f"avd_spec.{attr} = %r", getattr(avd_spec, attr))
     launch_cvd_args = _GetLaunchCvdArgs(avd_spec, config)
     logger.debug("launch_cvd_args: %s", launch_cvd_args)
-    if _LAUNCH_ARG_USE_LAUNCH_CVD in launch_cvd_args:
-        logger.debug("launch_cvd_args: removing %s", _LAUNCH_ARG_USE_LAUNCH_CVD)
-        launch_cvd_args.remove(_LAUNCH_ARG_USE_LAUNCH_CVD)
-    build_info_dict = GetRemoteBuildInfoDict(avd_spec)
-    logger.debug("build_info_dict: %s", build_info_dict)
-    build_target = build_info_dict.get("build_target", "")
-    use_cvd = build_target in _USE_CVD_TARGETS
-    cvd_bin_name = (
-        "cvd" if use_cvd
-        else remote_path.join(remote_dir, "bin", "launch_cvd")
-    )
-    # FIXME: Use the images and launch_cvd in avd_spec.remote_image_dir when
-    # cuttlefish can reliably share images.
-    cmd = ["HOME=" + remote_path.join("$HOME", remote_dir), cvd_bin_name]
-    all_args = []
-    if use_cvd:
-        all_args.append("create")
+    use_cvd_create = True
+    for i, arg in enumerate(launch_cvd_args):
+        if _LAUNCH_ARG_USE_LAUNCH_CVD in arg:
+            use_cvd_create = False
+            logger.debug("launch cvd arg: %s, removing %s", arg, _LAUNCH_ARG_USE_LAUNCH_CVD)
+            arg = arg.replace(_LAUNCH_ARG_USE_LAUNCH_CVD, "")
+            launch_cvd_args[i] = arg
+    cmd = ["HOME=" + remote_path.join("$HOME", remote_dir)]
+    if use_cvd_create:
+        cmd.extend(["cvd", "create"])
     else:
-        all_args.append("-daemon")
+        cmd.extend([remote_path.join(remote_dir, "bin", "launch_cvd"), "-daemon"])
     logger.debug("extra_args: %s", extra_args)
-    all_args.extend(extra_args)
-    all_args.extend(launch_cvd_args)
-    logger.debug("all args: %s", all_args)
-    cmd.extend(all_args)
+    cmd.extend(extra_args)
+    cmd.extend(launch_cvd_args)
+    logger.debug("cmd: %s", cmd)
     return " ".join(cmd)
 
 def _SymlinkDirsForCvdCreate(ssh_obj):
@@ -1011,6 +1005,24 @@ def _SymlinkDirsForCvdCreate(ssh_obj):
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         utils.PrintColorString(str(e), utils.TextColors.FAIL)
 
+def _HandleTFPowerwashForCvdCreate(ssh_obj):
+    """handle powerwash for TF client when using `cvd create`.
+
+    Tradefed uses hardcoded path `bin/powerwash_cvd` for
+    powerwashing. When the device is created via
+    `cvd create` calling powerwash this way fails.
+
+    Args:
+        ssh_obj: An Ssh object.
+    """
+    try:
+        ssh_obj.Run("'rm bin/powerwash_cvd'")
+        ssh_obj.Run(f"'echo \"{_CVD_POWERWASH_SCRIPT}\" > bin/powerwash_cvd'")
+        ssh_obj.Run("cat bin/powerwash_cvd")
+        ssh_obj.Run("chmod +x bin/powerwash_cvd")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        utils.PrintColorString(str(e), utils.TextColors.FAIL)
+
 def ExecuteRemoteLaunchCvd(ssh_obj, cmd, boot_timeout_secs):
     """launch_cvd command on a remote host or a GCE instance.
 
@@ -1045,6 +1057,7 @@ def ExecuteRemoteLaunchCvd(ssh_obj, cmd, boot_timeout_secs):
         if "cvd create" in cmd:
             logger.debug("used `cvd create`: symlink dirs")
             _SymlinkDirsForCvdCreate(ssh_obj)
+            _HandleTFPowerwashForCvdCreate(ssh_obj)
     return ""
 
 
