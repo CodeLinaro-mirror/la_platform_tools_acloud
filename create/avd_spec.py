@@ -165,6 +165,10 @@ class AVDSpec():
         self._cfg = config.GetAcloudConfig(args)
         # Reporting args.
         self._serial_log_file = None
+        # emulator_* are only used for goldfish avd_type.
+        self._emulator_build_id = None
+        self._emulator_build_target = None
+        self._emulator_zip = None
 
         # Fields only used for cheeps type.
         self._stable_cheeps_host_image_name = None
@@ -236,7 +240,7 @@ class AVDSpec():
         """Process autoconnect.
 
         Only Cuttlefish AVD support 'webrtc' and need to default use 'webrtc'.
-        Other AVD types(cheeps..etc.) still keep using ‘vnc’.
+        Other AVD types(goldfish, cheeps..etc.) still keep using ‘vnc’.
         """
         if self._autoconnect == constants.INS_KEY_WEBRTC:
             if self.avd_type != constants.TYPE_CF:
@@ -390,6 +394,10 @@ class AVDSpec():
         self._openwrt = args.openwrt
         self._use_launch_cvd = args.use_launch_cvd
         self._serial_log_file = args.serial_log_file
+        self._emulator_build_id = args.emulator_build_id
+        self._emulator_build_target = (args.emulator_build_target
+                                       or self._cfg.emulator_build_target)
+        self._emulator_zip = args.emulator_zip
         self._gpu = args.gpu
         self._disk_type = (args.disk_type or self._cfg.disk_type)
         self._base_instance_num = args.base_instance_num
@@ -471,6 +479,12 @@ class AVDSpec():
             self._ProcessFVPLocalImageArgs()
         elif self._avd_type == constants.TYPE_TRUSTY:
             self._ProcessTrustyLocalImageArgs(args.local_image)
+        elif self._avd_type == constants.TYPE_GF:
+            local_image_path = self._GetLocalImagePath(args.local_image)
+            if os.path.isdir(local_image_path):
+                self._local_image_dir = local_image_path
+            else:
+                self._local_image_artifact = local_image_path
         elif self._avd_type == constants.TYPE_GCE:
             self._local_image_artifact = self._GetGceLocalImagePath(
                 args.local_image)
@@ -1047,6 +1061,21 @@ class AVDSpec():
     def gpu(self):
         """Return gpu."""
         return self._gpu
+
+    @property
+    def emulator_build_id(self):
+        """Return emulator_build_id."""
+        return self._emulator_build_id
+
+    @property
+    def emulator_build_target(self):
+        """Return emulator_build_target."""
+        return self._emulator_build_target
+
+    @property
+    def emulator_zip(self):
+        """Return emulator_zip."""
+        return self._emulator_zip
 
     @property
     def client_adb_port(self):

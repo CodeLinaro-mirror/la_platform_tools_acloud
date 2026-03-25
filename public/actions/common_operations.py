@@ -83,7 +83,7 @@ class DevicePool:
         """Constructs a new DevicePool.
 
         Args:
-            device_factory: A device factory capable of producing a
+            device_factory: A device factory capable of producing a goldfish or
                 cuttlefish device. The device factory must expose an attribute with
                 the credentials that can be used to retrieve information from the
                 constructed device.
@@ -99,7 +99,7 @@ class DevicePool:
         Args:
             num: Number of devices to create.
         """
-        # Create host instances for cuttlefish device.
+        # Create host instances for cuttlefish/goldfish device.
         # Currently one instance supports only 1 device.
         for _ in range(num):
             instance = self._device_factory.CreateInstance()
@@ -156,6 +156,7 @@ class DevicePool:
             output_file: String, the output tar file path
             port: The serial port number to be collected
         """
+        # For emulator, the serial log is the virtual host serial log.
         # For GCE AVD device, the serial log is the AVD device serial log.
         with utils.TempDir() as tempdir:
             src_dict = {}
@@ -224,7 +225,7 @@ def CreateDevices(command, cfg, device_factory, num, avd_type,
         cfg: An AcloudConfig instance.
         device_factory: A factory capable of producing a single device.
         num: The number of devices to create.
-        avd_type: String, the AVD type(cuttlefish...).
+        avd_type: String, the AVD type(cuttlefish, goldfish...).
         report_internal_ip: Boolean to report the internal ip instead of
                             external ip.
         serial_log_file: String, the file path to tar the serial logs.

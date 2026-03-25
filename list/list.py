@@ -195,7 +195,7 @@ def GetActiveCVD(local_instance_id):
 
 
 def GetLocalInstances():
-    """Look for local cuttleifsh instances.
+    """Look for local cuttleifsh and goldfish instances.
 
     Returns:
         List of local instances.
@@ -205,7 +205,8 @@ def GetLocalInstances():
         return []
 
     id_cfg_pairs = instance.GetAllLocalInstanceConfigs()
-    return _GetLocalCuttlefishInstances(id_cfg_pairs)
+    return (_GetLocalCuttlefishInstances(id_cfg_pairs) +
+            instance.LocalGoldfishInstance.GetExistingInstances())
 
 
 def GetInstances(cfg):
@@ -313,7 +314,7 @@ def _FilterInstancesByNames(instances, names):
 
 
 def GetLocalInstanceLockByName(name):
-    """Get the lock of a local cuttelfish instance.
+    """Get the lock of a local cuttelfish or goldfish instance.
 
     Args:
         name: The instance name.
@@ -325,11 +326,15 @@ def GetLocalInstanceLockByName(name):
     if cf_id is not None:
         return instance.GetLocalInstanceLock(cf_id)
 
+    gf_id = instance.LocalGoldfishInstance.GetIdByName(name)
+    if gf_id is not None:
+        return instance.LocalGoldfishInstance.GetLockById(gf_id)
+
     return None
 
 
 def GetLocalInstancesByNames(names):
-    """Get local cuttlefish instances by names.
+    """Get local cuttlefish and goldfish instances by names.
 
     This method does not raise an error if it cannot find all instances.
 
@@ -337,7 +342,7 @@ def GetLocalInstancesByNames(names):
         names: Collection of instance names.
 
     Returns:
-        List consisting of LocalInstance objects.
+        List consisting of LocalInstance and LocalGoldfishInstance objects.
     """
     id_cfg_pairs = []
     for name in names:
@@ -352,7 +357,11 @@ def GetLocalInstancesByNames(names):
             if cfg_path:
                 id_cfg_pairs.append((ins_id, cfg_path))
 
-    return _GetLocalCuttlefishInstances(id_cfg_pairs)
+    gf_instances = [ins for ins in
+                    instance.LocalGoldfishInstance.GetExistingInstances()
+                    if ins.name in names]
+
+    return _GetLocalCuttlefishInstances(id_cfg_pairs) + gf_instances
 
 
 def GetInstancesFromInstanceNames(cfg, instance_names):
